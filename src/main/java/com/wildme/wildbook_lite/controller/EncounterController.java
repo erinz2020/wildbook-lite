@@ -56,4 +56,9 @@ public class EncounterController {
     public Encounter create(@Valid @RequestBody CreateEncounterRequest request) {
         return service.create(request);
     }
+
+    @PatchMapping("/{id}/individual")
+    public Encounter assignIndividual(@PathVariable Long id, @RequestBody UpdateEncounterRequest request) {
+        return service.assignIndividual(id, request);
+    }
 }
