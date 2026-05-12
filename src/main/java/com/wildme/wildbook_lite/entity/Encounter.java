@@ -12,7 +12,9 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.FetchType;
+import jakarta.persistence.Version;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+
 
 @Entity
 public class Encounter {
@@ -36,9 +38,16 @@ public class Encounter {
 
     @JsonIgnore
     @OneToMany(mappedBy = "encounter")
+    private List<MediaAsset> mediaAssets = new ArrayList<>();
+
+    @JsonIgnore
+    @OneToMany(mappedBy = "encounter")
     private List<Sighting> sightings = new ArrayList<>();
 
     public Encounter() {}
+
+    @Version
+    private Long version;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

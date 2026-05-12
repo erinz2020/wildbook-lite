@@ -4,6 +4,7 @@ import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.entity.Individual;
 import com.wildme.wildbook_lite.exception.NotFoundException;
+import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.repository.IndividualRepository;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
@@ -78,10 +79,11 @@ public class EncounterService {
     @Transactional
     public Encounter assignIndividual(Long id, UpdateEncounterRequest request) {
         Long indId = request.individualId();
-        //verify whether individual id exists;
-        Individual ind = indRepo.findById(indId).orElseThrow(() -> new NotFoundException("Individual id not found:" + indId));
-        
+        Individual ind = indRepo.findById(indId).orElseThrow(() -> new NotFoundException("Individual id not found:" + indId));       
         Encounter enc = encRepo.findById(id).orElseThrow(() -> new NotFoundException("Encounter id not found:" + id));
+        if(!enc.getSpecies().equals(ind.getSpecies())) {
+            throw new BusinessException("Species mismatch between encounter and individual");
+        }
         enc.setIndividual(ind);
         return encRepo.save(enc);
     }
