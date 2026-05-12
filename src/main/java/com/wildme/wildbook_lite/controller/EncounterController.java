@@ -1,7 +1,5 @@
 package com.wildme.wildbook_lite.controller;
 
-import java.util.List;
-
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.service.EncounterService;
@@ -15,6 +13,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @RestController
 @RequestMapping("/api/encounters")
@@ -27,8 +29,12 @@ public class EncounterController {
     }
 
     @GetMapping
-    public List<Encounter> list() {
-        return service.findAll();
+    public Page<Encounter> list(
+        @RequestParam(required = false) String species,
+        @RequestParam(required = false) String location,
+        @PageableDefault(size = 50) 
+        Pageable pageable) {
+        return service.findAll(species, location, pageable);
     }
 
     @GetMapping("/{id}")

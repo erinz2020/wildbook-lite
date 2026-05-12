@@ -1,14 +1,14 @@
 package com.wildme.wildbook_lite.service;
 
-import java.util.List;
-
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
 import org.springframework.stereotype.Service;
-
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 
 @Service
 public class EncounterService {
@@ -19,8 +19,21 @@ public class EncounterService {
         this.repo = repo;
     }
 
-    public List<Encounter> findAll() {
-        return repo.findAll();
+    public Page<Encounter> findAll(
+        String species,
+        String location,
+        Pageable pageable) {
+        Specification<Encounter> spec = Specification.where((root, query, cb) -> null);
+
+        if(species != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("species"), species));
+        }
+
+        if(location != null) {
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("location"), location));
+        }
+
+        return repo.findAll(spec, pageable);
     }
 
     public Encounter findById(Long id) {
