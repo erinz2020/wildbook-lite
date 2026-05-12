@@ -12,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.FetchType;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Entity
 public class Encounter {
@@ -33,6 +34,7 @@ public class Encounter {
     @JoinColumn(name = "observer_id")
     private Observer observer;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "encounter")
     private List<Sighting> sightings = new ArrayList<>();
 

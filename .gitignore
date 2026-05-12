@@ -5,6 +5,7 @@ javatasks.md
 javaprogress.md
 interviewQuestions.md
 CLAUDE.md
+pitfalls.md
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/

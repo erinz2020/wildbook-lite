@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.OneToMany;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Entity
 public class Observer {
@@ -20,9 +21,11 @@ public class Observer {
     private String email;
     private String organization;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "observer")
     private List<Encounter> encounters = new ArrayList<>();
 
+    @JsonIgnore
     @OneToMany(mappedBy = "observer")
     private List<Sighting> sightings = new ArrayList<>();
 

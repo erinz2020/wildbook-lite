@@ -10,6 +10,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.CascadeType;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Entity
 public class Individual {
@@ -24,6 +25,7 @@ public class Individual {
 
     private LocalDateTime dateCreated;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "individual", cascade = CascadeType.ALL)
     private List<Encounter> encounters = new ArrayList<>();
 
