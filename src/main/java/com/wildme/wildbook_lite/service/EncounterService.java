@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class EncounterService {
@@ -23,6 +24,7 @@ public class EncounterService {
         this.indRepo = indRepo;
     }
 
+    @Transactional(readOnly = true)
     public Page<Encounter> findAll(
         String species,
         String location,
@@ -40,10 +42,12 @@ public class EncounterService {
         return encRepo.findAll(spec, pageable);
     }
 
+    @Transactional(readOnly = true)
     public Encounter findById(Long id) {
         return encRepo.findById(id).orElseThrow(() -> new NotFoundException("Encounter not found:" + id));
     }
 
+    @Transactional
     public void deleteById(Long id) {
         if (!encRepo.existsById(id)) {
             throw new NotFoundException("Encounter not found:" + id);
@@ -51,6 +55,7 @@ public class EncounterService {
         encRepo.deleteById(id);
     }
 
+    @Transactional
     public Encounter update(Long id, UpdateEncounterRequest request) {
         Encounter encounter = findById(id);
         if(request.location() != null) {
@@ -62,6 +67,7 @@ public class EncounterService {
         return encRepo.save(encounter);
     }
 
+    @Transactional
     public Encounter create(CreateEncounterRequest request) {
         Encounter encounter = new Encounter();
         encounter.setLocation(request.location());
@@ -69,6 +75,7 @@ public class EncounterService {
         return encRepo.save(encounter);
     }
 
+    @Transactional
     public Encounter assignIndividual(Long id, UpdateEncounterRequest request) {
         Long indId = request.individualId();
         //verify whether individual id exists;

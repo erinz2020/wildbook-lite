@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.transaction.annotation.Transactional;
+    
 
 @Service
 public class IndividualService {
@@ -19,6 +21,7 @@ public class IndividualService {
         this.repo = repo;
     }
 
+    @Transactional(readOnly = true)
     public Page<Individual> findAll(
         String species,
         Pageable pageable) {
@@ -31,10 +34,12 @@ public class IndividualService {
         return repo.findAll(spec, pageable);
     }
 
+    @Transactional(readOnly = true)
     public Individual findById(Long id) {
         return repo.findById(id).orElseThrow(() -> new NotFoundException("Individual not found:" + id));
     }
 
+    @Transactional
     public void deleteById(Long id) {
         if (!repo.existsById(id)) {
             throw new NotFoundException("Individual not found:" + id);
@@ -42,6 +47,7 @@ public class IndividualService {
         repo.deleteById(id);
     }
 
+    @Transactional
     public Individual update(Long id, UpdateIndividualRequest request) {
         Individual individual = findById(id);
         if(request.nickname() != null) {
@@ -53,6 +59,7 @@ public class IndividualService {
         return repo.save(individual);
     }
 
+    @Transactional
     public Individual create(CreateIndividualRequest request) {
         Individual individual = new Individual();
         individual.setNickname(request.nickname());

@@ -12,6 +12,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 
 @Service
 public class SightingService {
@@ -28,6 +30,7 @@ public class SightingService {
         this.observerRepo = observerRepo;
     }
 
+    @Transactional(readOnly = true)
     public Page<Sighting> findAll(Long encounterId, Long observerId, Pageable pageable) {
         Specification<Sighting> spec = Specification.where((root, query, cb) -> null);
 
@@ -43,11 +46,13 @@ public class SightingService {
         return sightingRepo.findAll(spec, pageable);
     }
 
+    @Transactional(readOnly = true)
     public Sighting findById(Long id) {
         return sightingRepo.findById(id)
                 .orElseThrow(() -> new NotFoundException("Sighting not found: " + id));
     }
 
+    @Transactional
     public Sighting create(CreateSightingRequest request) {
         Encounter encounter = encounterRepo.findById(request.encounterId())
                 .orElseThrow(() -> new NotFoundException("Encounter not found: " + request.encounterId()));
@@ -65,6 +70,7 @@ public class SightingService {
         return sightingRepo.save(sighting);
     }
 
+    @Transactional
     public void deleteById(Long id) {
         if (!sightingRepo.existsById(id)) {
             throw new NotFoundException("Sighting not found: " + id);
