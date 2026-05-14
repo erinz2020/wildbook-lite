@@ -1,6 +1,7 @@
 package com.wildme.wildbook_lite.service;
 
-import java.io.IOException;
+import java.util.List;
+import java.util.UUID;
 
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.entity.MediaAsset;
@@ -8,20 +9,22 @@ import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.repository.MediaAssetRepository;
+import com.wildme.wildbook_lite.storage.AssetStore;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import java.util.UUID;
 
 @Service
 public class MediaAssetService {
 
     private final MediaAssetRepository mediaRepo;
     private final EncounterRepository encRepo;
+    private final AssetStore assetStore;
 
-    public MediaAssetService(MediaAssetRepository mediaRepo, EncounterRepository encRepo) {
+    public MediaAssetService(MediaAssetRepository mediaRepo, EncounterRepository encRepo, AssetStore assetStore) {
         this.encRepo = encRepo;
         this.mediaRepo = mediaRepo;
+        this.assetStore = assetStore;
     }
 
     @Transactional()
@@ -41,7 +44,7 @@ public class MediaAssetService {
         //verify file size
         if(file.getSize() > 10 * 1024 * 1024) { // 10 MB limit
             throw new BusinessException("File is too large");
-        }        
+        }
 
         //generate safe file name
         String originalName = file.getOriginalFilename();
@@ -54,30 +57,24 @@ public class MediaAssetService {
         }
         String safeName = UUID.randomUUID() + extension;
 
-        //save file to disk
-        String uploadDir = "uploads/";
-
-        //create uploads dir(if does not exists)
-        java.nio.file.Path dirPath = java.nio.file.Paths.get(uploadDir);
-        try {
-            if(!java.nio.file.Files.exists(dirPath)) {
-                java.nio.file.Files.createDirectories(dirPath);
-            }
-
-            //write file content to disk
-            java.nio.file.Path filePath = dirPath.resolve(safeName);
-            file.transferTo(filePath.toFile());
-        }catch (IOException e) {
-            throw new RuntimeException("File upload failed", e);
-        }        
+        //store file via AssetStore (disk, S3, etc)
+        String filePath = assetStore.store(file, safeName);
 
         //create MediaAsset record, save to db
         MediaAsset asset = new MediaAsset();
         asset.setFileName(originalName);
-        asset.setFilePath(uploadDir + safeName);
+        asset.setFilePath(filePath);
         asset.setFileSize(file.getSize());
         asset.setEncounter(enc);
 
         return mediaRepo.save(asset);
+    }
+
+    @Transactional()
+    public  List<MediaAsset> findByEncounterId(Long encounterId) {
+        encRepo.findById(encounterId)
+        .orElseThrow(() -> new NotFoundException("Encounter not found"));
+
+        return mediaRepo.findByEncounterId(encounterId);
     }
 }

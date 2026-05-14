@@ -1,12 +1,14 @@
 package com.wildme.wildbook_lite.controller;
 
+import java.util.List;
+
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.multipart.MultipartFile;
-
 
 import com.wildme.wildbook_lite.service.MediaAssetService;
 import com.wildme.wildbook_lite.entity.MediaAsset;
@@ -27,5 +29,12 @@ public class MediaAssetController {
         @RequestParam("file") MultipartFile file
      ) {
         return service.upload(encounterId, file);
+    }
+
+    @GetMapping("/{encounterId}")
+    public List<MediaAsset> findByEncounterId(
+        @PathVariable Long encounterId
+    ) {
+        return service.findByEncounterId(encounterId);
     }
 }
