@@ -23,17 +23,20 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
+    private final AuthMetrics metrics;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        AuthenticationManager authenticationManager,
                        JwtService jwtService,
-                       RefreshTokenService refreshTokenService) {
+                       RefreshTokenService refreshTokenService,
+                       AuthMetrics metrics) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -46,6 +49,7 @@ public class AuthService {
         }
         User user = new User(req.username(), req.email(), passwordEncoder.encode(req.password()));
         userRepository.save(user);
+        metrics.onRegisterSuccess();
         return issuePair(user);
     }
 
@@ -57,8 +61,10 @@ public class AuthService {
             );
             User user = userRepository.findByUsername(auth.getName())
                 .orElseThrow(() -> new NotFoundException("User vanished: " + auth.getName()));
+            metrics.onLoginSuccess();
             return issuePair(user);
         } catch (BadCredentialsException ex) {
+            metrics.onLoginFailure();
             throw new BusinessException("Invalid username or password");
         }
     }

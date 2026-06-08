@@ -8,10 +8,10 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.wildme.wildbook_lite.config.AppProperties;
 import com.wildme.wildbook_lite.exception.BusinessException;
 
 @Service
@@ -23,12 +23,9 @@ public class RefreshTokenService {
     private final RefreshTokenRepository repo;
     private final long lifetimeDays;
 
-    public RefreshTokenService(
-        RefreshTokenRepository repo,
-        @Value("${app.jwt.refresh-lifetime-days:30}") long lifetimeDays
-    ) {
+    public RefreshTokenService(RefreshTokenRepository repo, AppProperties props) {
         this.repo = repo;
-        this.lifetimeDays = lifetimeDays;
+        this.lifetimeDays = props.jwt().refreshLifetimeDays();
     }
 
     /** Returns the RAW token to give the client. The DB only stores the hash. */

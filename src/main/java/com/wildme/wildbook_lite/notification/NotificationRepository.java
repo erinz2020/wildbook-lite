@@ -1,5 +1,7 @@
 package com.wildme.wildbook_lite.notification;
 
+import java.time.Instant;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -20,4 +22,9 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     @Query("update Notification n set n.read = true " +
            "where n.recipientUserId = :userId and n.read = false")
     int markAllAsRead(@Param("userId") Long userId);
+
+    /** Used by the daily cleanup job: drop notifications that are read and old. */
+    @Modifying
+    @Query("delete from Notification n where n.read = true and n.createdAt < :threshold")
+    int deleteReadBefore(@Param("threshold") Instant threshold);
 }

@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.wildme.wildbook_lite.auth.AppPrincipal;
+import com.wildme.wildbook_lite.auth.CurrentUser;
 import com.wildme.wildbook_lite.common.PageResponse;
 import com.wildme.wildbook_lite.notification.dto.NotificationResponse;
 
@@ -31,9 +33,17 @@ public class NotificationController {
         return PageResponse.from(service.listMine(unreadOnly, pageable), NotificationResponse::from);
     }
 
+    /**
+     * Demo of the @CurrentUser custom argument resolver — the controller
+     * receives the authenticated principal as a typed parameter, instead
+     * of pulling it from SecurityContextHolder manually.
+     */
     @GetMapping("/unread-count")
-    public Map<String, Long> unreadCount() {
-        return Map.of("count", service.unreadCount());
+    public Map<String, Object> unreadCount(@CurrentUser AppPrincipal me) {
+        return Map.of(
+            "user", me.getUsername(),
+            "count", service.unreadCount()
+        );
     }
 
     @PostMapping("/{id}/read")

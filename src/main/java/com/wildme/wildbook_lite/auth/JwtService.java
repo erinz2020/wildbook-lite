@@ -7,8 +7,9 @@ import java.util.Date;
 
 import javax.crypto.SecretKey;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import com.wildme.wildbook_lite.config.AppProperties;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -35,16 +36,15 @@ public class JwtService {
     private final SecretKey key;
     private final long expirationMinutes;
 
-    public JwtService(
-        @Value("${app.jwt.secret}") String secret,
-        @Value("${app.jwt.expiration-minutes}") long expirationMinutes
-    ) {
-        byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
+    public JwtService(AppProperties props) {
+        byte[] bytes = props.jwt().secret().getBytes(StandardCharsets.UTF_8);
+        // AppProperties already validates length >= 32 at bind time, but we
+        // defend in depth in case someone constructs the service manually.
         if (bytes.length < 32) {
             throw new IllegalStateException("app.jwt.secret must be >= 32 bytes (256 bits) for HS256");
         }
         this.key = Keys.hmacShaKeyFor(bytes);
-        this.expirationMinutes = expirationMinutes;
+        this.expirationMinutes = props.jwt().expirationMinutes();
     }
 
     public TokenPair issue(String username) {

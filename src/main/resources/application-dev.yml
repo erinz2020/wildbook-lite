@@ -26,5 +26,11 @@ app:
   jwt:
     secret: dev-only-secret-please-replace-with-256-bit-random-string-in-production-xxxxxxxxxxxxxx
     expiration-minutes: 60
+    refresh-lifetime-days: 30
   storage:
     media-dir: ./uploads
+  scheduling:
+    enabled: true
+    token-cleanup-cron: "0 0 3 * * *"            # every day at 03:00
+    notification-cleanup-cron: "0 0 4 * * *"     # every day at 04:00
+    notification-retention-days: 30

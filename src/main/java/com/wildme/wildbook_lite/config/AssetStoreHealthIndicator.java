@@ -4,7 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -21,8 +20,8 @@ public class AssetStoreHealthIndicator implements HealthIndicator {
 
     private final Path mediaDir;
 
-    public AssetStoreHealthIndicator(@Value("${app.storage.media-dir}") String mediaDir) {
-        this.mediaDir = Paths.get(mediaDir).toAbsolutePath();
+    public AssetStoreHealthIndicator(AppProperties props) {
+        this.mediaDir = Paths.get(props.storage().mediaDir()).toAbsolutePath();
     }
 
     @Override
