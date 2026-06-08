@@ -1,7 +1,11 @@
 package com.wildme.wildbook_lite.service;
 
 import java.time.Instant;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -10,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.wildme.wildbook_lite.auth.SecurityUtils;
+import com.wildme.wildbook_lite.common.Audited;
 import com.wildme.wildbook_lite.common.ForbiddenException;
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
@@ -59,6 +64,13 @@ public class EncounterService {
         return encRepo.findAll(spec, pageable);
     }
 
+    /**
+     * Cached by id. Note: cache stores the *entity*, permission check still
+     * runs for every caller — safe to share across users.
+     *
+     * Cache miss → DB hit → result stored. Cache hit → no DB call.
+     */
+    @Cacheable(value = "encounter", key = "#id")
     @Transactional(readOnly = true)
     public Encounter findById(Long id) {
         Encounter e = encRepo.findById(id)
@@ -67,6 +79,8 @@ public class EncounterService {
         return e;
     }
 
+    @Audited("encounter.delete")
+    @CacheEvict(value = "encounter", key = "#id")
     @Transactional
     public void deleteById(Long id) {
         Encounter e = encRepo.findById(id)
@@ -75,6 +89,8 @@ public class EncounterService {
         encRepo.delete(e);
     }
 
+    @Audited("encounter.update")
+    @CacheEvict(value = "encounter", key = "#id")
     @Transactional
     public Encounter update(Long id, UpdateEncounterRequest request) {
         Encounter encounter = encRepo.findById(id)
@@ -86,6 +102,7 @@ public class EncounterService {
         return encRepo.save(encounter);
     }
 
+    @Audited("encounter.create")
     @Transactional
     public Encounter create(CreateEncounterRequest request) {
         if (!projectGuard.canWrite(request.projectId())) {
@@ -120,6 +137,26 @@ public class EncounterService {
         }
         enc.setIndividual(ind);
         return encRepo.save(enc);
+    }
+
+    /**
+     * Streaming export. Consumer is invoked for each row WITHOUT holding the
+     * full result set in memory. The DB cursor + entity lifecycle stay inside
+     * this @Transactional boundary; if the consumer throws, the tx rolls back.
+     *
+     * Why callback-style and not "return Stream<Encounter>": the JPA stream
+     * is bound to a Session that closes when this method returns, so the
+     * controller wouldn't be able to consume it. Forcing the work into the
+     * service keeps the contract clean.
+     */
+    @Transactional(readOnly = true)
+    public void streamByProject(Long projectId, Consumer<Encounter> consumer) {
+        if (!projectGuard.canRead(projectId)) {
+            throw new ForbiddenException("No read access to project: " + projectId);
+        }
+        try (Stream<Encounter> stream = encRepo.streamByProjectId(projectId)) {
+            stream.forEach(consumer);
+        }
     }
 
     // ----- permission helpers -----

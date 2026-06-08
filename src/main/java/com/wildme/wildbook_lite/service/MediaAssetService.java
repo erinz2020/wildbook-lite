@@ -3,10 +3,12 @@ package com.wildme.wildbook_lite.service;
 import java.util.List;
 import java.util.UUID;
 
+import com.wildme.wildbook_lite.common.ForbiddenException;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.entity.MediaAsset;
 import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.exception.BusinessException;
+import com.wildme.wildbook_lite.project.ProjectGuard;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.repository.MediaAssetRepository;
 import com.wildme.wildbook_lite.storage.AssetStore;
@@ -20,11 +22,16 @@ public class MediaAssetService {
     private final MediaAssetRepository mediaRepo;
     private final EncounterRepository encRepo;
     private final AssetStore assetStore;
+    private final ProjectGuard projectGuard;
 
-    public MediaAssetService(MediaAssetRepository mediaRepo, EncounterRepository encRepo, AssetStore assetStore) {
+    public MediaAssetService(MediaAssetRepository mediaRepo,
+                             EncounterRepository encRepo,
+                             AssetStore assetStore,
+                             ProjectGuard projectGuard) {
         this.encRepo = encRepo;
         this.mediaRepo = mediaRepo;
         this.assetStore = assetStore;
+        this.projectGuard = projectGuard;
     }
 
     @Transactional()
@@ -35,6 +42,11 @@ public class MediaAssetService {
         //verify encounter exists
         Encounter enc = encRepo.findById(encounterId)
         .orElseThrow(() -> new NotFoundException("Encounter not found"));
+
+        //verify caller can write to the encounter's project
+        if (enc.getProjectId() != null && !projectGuard.canWrite(enc.getProjectId())) {
+            throw new ForbiddenException("No write access to project: " + enc.getProjectId());
+        }
 
         //verify file not null
         if(file.isEmpty()) {
