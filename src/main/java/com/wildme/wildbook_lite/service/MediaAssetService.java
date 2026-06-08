@@ -82,10 +82,14 @@ public class MediaAssetService {
         return mediaRepo.save(asset);
     }
 
-    @Transactional()
+    @Transactional(readOnly = true)
     public  List<MediaAsset> findByEncounterId(Long encounterId) {
-        encRepo.findById(encounterId)
+        Encounter enc = encRepo.findById(encounterId)
         .orElseThrow(() -> new NotFoundException("Encounter not found"));
+
+        if (enc.getProjectId() != null && !projectGuard.canRead(enc.getProjectId())) {
+            throw new ForbiddenException("No read access to project: " + enc.getProjectId());
+        }
 
         return mediaRepo.findByEncounterId(encounterId);
     }
