@@ -4,24 +4,34 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.Index;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.FetchType;
+import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 
 @Entity
+@Table(name = "encounter", indexes = {
+    @Index(name = "ix_encounter_project", columnList = "project_id"),
+    @Index(name = "ix_encounter_species", columnList = "species")
+})
 public class Encounter {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "project_id")
+    private Long projectId;
 
     private String location;
     private String species;
@@ -51,6 +61,9 @@ public class Encounter {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+
+    public Long getProjectId() { return projectId; }
+    public void setProjectId(Long projectId) { this.projectId = projectId; }
 
     public String getLocation() { return location; }
     public void setLocation(String location) { this.location = location; }
