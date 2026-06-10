@@ -1,0 +1,38 @@
+# Test profile.
+#
+# Notes:
+#   - datasource is left blank intentionally. AbstractPostgresIT sets
+#     spring.datasource.url/username/password dynamically from the
+#     Testcontainers Postgres at runtime, before the context starts.
+#   - ddl-auto stays "update" because Flyway is still off; the schema
+#     is built by Hibernate against the freshly-started container.
+#   - Scheduled jobs and data seeding turned OFF in tests so they don't
+#     fire mid-assertion and don't write surprise rows.
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  flyway:
+    enabled: false
+
+app:
+  jwt:
+    secret: test-secret-please-use-at-least-32-bytes-here-aaaaaaaa
+    expiration-minutes: 60
+    refresh-lifetime-days: 30
+  storage:
+    media-dir: ./target/test-uploads
+  scheduling:
+    enabled: false
+    token-cleanup-cron: "0 0 3 * * *"
+    notification-cleanup-cron: "0 0 4 * * *"
+    notification-retention-days: 30
+  seed:
+    enabled: false
+
+logging:
+  level:
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN
