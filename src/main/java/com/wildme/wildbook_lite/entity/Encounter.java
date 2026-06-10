@@ -4,8 +4,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.wildme.wildbook_lite.encounter.EncounterStatus;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -22,7 +26,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 @Entity
 @Table(name = "encounter", indexes = {
     @Index(name = "ix_encounter_project", columnList = "project_id"),
-    @Index(name = "ix_encounter_species", columnList = "species")
+    @Index(name = "ix_encounter_species", columnList = "species"),
+    @Index(name = "ix_encounter_status", columnList = "status")
 })
 public class Encounter {
 
@@ -37,6 +42,19 @@ public class Encounter {
     private String species;
     private LocalDateTime encounterDate;
     private String notes;
+
+    /**
+     * Workflow state. New encounters land in DRAFT. Transitions are
+     * managed by EncounterService.transition() through EncounterStatus's
+     * state-machine table.
+     *
+     * @Enumerated(STRING) so the column stores the name ("DRAFT"), not
+     * the ordinal. ORDINAL is a footgun — reordering the enum silently
+     * remaps every existing row.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 16)
+    private EncounterStatus status = EncounterStatus.DRAFT;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "individual_id")
@@ -76,6 +94,9 @@ public class Encounter {
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+
+    public EncounterStatus getStatus() { return status; }
+    public void setStatus(EncounterStatus status) { this.status = status; }
 
     public Individual getIndividual() { return individual; }
     public void setIndividual(Individual individual) { this.individual = individual; }

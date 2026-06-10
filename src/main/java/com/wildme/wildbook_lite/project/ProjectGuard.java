@@ -39,7 +39,9 @@ public class ProjectGuard {
         return hasAtLeast(projectId, ProjectRole.OWNER);
     }
 
-    private boolean hasAtLeast(Long projectId, ProjectRole required) {
+    /** Pulled out for callers that need to compare against a min role chosen at runtime (e.g., state-machine transitions). */
+    @Transactional(readOnly = true)
+    public boolean hasAtLeast(Long projectId, ProjectRole required) {
         Long userId = currentUserIdOrNull();
         if (userId == null || projectId == null) return false;
         return memberRepository.findByProjectIdAndUserId(projectId, userId)

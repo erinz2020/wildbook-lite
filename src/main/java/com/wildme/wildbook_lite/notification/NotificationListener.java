@@ -58,4 +58,32 @@ public class NotificationListener {
             ));
         }
     }
+
+    /**
+     * Fan-out on publish — same async + after-commit + REQUIRES_NEW
+     * pattern as encounter-created, different body. Same listener bean
+     * by design: "things that happen to encounters" naturally cluster.
+     */
+    @Async("applicationTaskExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onEncounterPublished(EncounterPublishedEvent event) {
+        List<ProjectMember> members = memberRepo.findByProjectId(event.projectId());
+        log.info("[notification] publish fan-out encounter={} → {} member(s)",
+            event.encounterId(), members.size());
+
+        for (ProjectMember m : members) {
+            if (m.getUserId().equals(event.publishedByUserId())) continue;
+            notificationRepo.save(new Notification(
+                m.getUserId(),
+                Notification.Kind.ENCOUNTER_PUBLISHED,
+                "Encounter published",
+                "Encounter #" + event.encounterId()
+                    + " (" + (event.species() == null ? "unknown species" : event.species()) + ")"
+                    + " was published by user " + event.publishedByUserId(),
+                "encounter",
+                event.encounterId()
+            ));
+        }
+    }
 }

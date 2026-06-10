@@ -1,6 +1,7 @@
 package com.wildme.wildbook_lite.service;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -18,35 +19,62 @@ import com.wildme.wildbook_lite.common.Audited;
 import com.wildme.wildbook_lite.common.ForbiddenException;
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
+import com.wildme.wildbook_lite.encounter.EncounterStatus;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.entity.Individual;
 import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.notification.EncounterCreatedEvent;
+import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
 import com.wildme.wildbook_lite.project.ProjectGuard;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.repository.IndividualRepository;
+import com.wildme.wildbook_lite.tag.EncounterTagRepository;
 
 @Service
 public class EncounterService {
 
     private final EncounterRepository encRepo;
     private final IndividualRepository indRepo;
+    private final EncounterTagRepository encTagRepo;
     private final ProjectGuard projectGuard;
     private final ApplicationEventPublisher events;
 
     public EncounterService(EncounterRepository encRepo,
                             IndividualRepository indRepo,
+                            EncounterTagRepository encTagRepo,
                             ProjectGuard projectGuard,
                             ApplicationEventPublisher events) {
         this.encRepo = encRepo;
         this.indRepo = indRepo;
+        this.encTagRepo = encTagRepo;
         this.projectGuard = projectGuard;
         this.events = events;
     }
 
+    /**
+     * Listing with composable filters. All filters AND together.
+     *
+     *  - species / location: exact match
+     *  - status: workflow filter (e.g., show only PUBLISHED to viewers)
+     *  - tagIds: encounter must carry ALL of these tags. We pre-resolve
+     *    the matching encounter IDs via EncounterTagRepository (which
+     *    does the heavy lifting in one GROUP BY HAVING query) and feed
+     *    the result back through `id IN (...)` on the main Specification.
+     *
+     *    Why this two-step instead of joining EncounterTag into the
+     *    main spec: a join repeated N times per tag would let Hibernate
+     *    do a cartesian product and we'd have to wrestle with `distinct`,
+     *    pagination, and ordering. The IN-subquery shape is easier to
+     *    reason about and the DB can plan it cleanly.
+     */
     @Transactional(readOnly = true)
-    public Page<Encounter> findAll(Long projectId, String species, String location, Pageable pageable) {
+    public Page<Encounter> findAll(Long projectId,
+                                   String species,
+                                   String location,
+                                   EncounterStatus status,
+                                   List<Long> tagIds,
+                                   Pageable pageable) {
         if (projectId == null) {
             throw new BusinessException("projectId is required for listing encounters");
         }
@@ -60,6 +88,16 @@ public class EncounterService {
         }
         if (location != null) {
             spec = spec.and((root, q, cb) -> cb.equal(root.get("location"), location));
+        }
+        if (status != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), status));
+        }
+        if (tagIds != null && !tagIds.isEmpty()) {
+            List<Long> matchingIds = encTagRepo.findEncounterIdsWithAllTags(tagIds, tagIds.size());
+            if (matchingIds.isEmpty()) {
+                return Page.empty(pageable);
+            }
+            spec = spec.and((root, q, cb) -> root.get("id").in(matchingIds));
         }
         return encRepo.findAll(spec, pageable);
     }
@@ -137,6 +175,59 @@ public class EncounterService {
         }
         enc.setIndividual(ind);
         return encRepo.save(enc);
+    }
+
+    /**
+     * Move an encounter through its workflow.
+     *
+     *   1. Look up the encounter (must exist).
+     *   2. Find the (current → target) entry in EncounterStatus's allowed-
+     *      transition table; reject unknown transitions with a 400.
+     *   3. Check the caller is at the minimum project role that transition
+     *      requires (e.g., REVIEWED→PUBLISHED needs OWNER).
+     *   4. Flip the status and save.
+     *   5. On publish, publish an EncounterPublishedEvent that the
+     *      notification listener fans out asynchronously after commit.
+     *
+     * Cache eviction: status change must invalidate the @Cacheable entry
+     * keyed by id, otherwise findById would serve stale status.
+     */
+    @Audited("encounter.transition")
+    @CacheEvict(value = "encounter", key = "#id")
+    @Transactional
+    public Encounter transition(Long id, EncounterStatus toStatus) {
+        Encounter enc = encRepo.findById(id)
+            .orElseThrow(() -> new NotFoundException("Encounter not found: " + id));
+        // Read access is enough to *see* an encounter — the transition itself
+        // gates by the project role required for that specific arrow.
+        if (enc.getProjectId() != null && !projectGuard.canRead(enc.getProjectId())) {
+            throw new ForbiddenException("No access to encounter: " + id);
+        }
+
+        EncounterStatus current = enc.getStatus() == null ? EncounterStatus.DRAFT : enc.getStatus();
+        EncounterStatus.Transition allowed = EncounterStatus.find(current, toStatus)
+            .orElseThrow(() -> new BusinessException(
+                "Illegal transition: " + current + " → " + toStatus));
+
+        if (!projectGuard.hasAtLeast(enc.getProjectId(), allowed.minRole())) {
+            throw new ForbiddenException(
+                "Transition " + current + " → " + toStatus
+                + " requires project role " + allowed.minRole());
+        }
+
+        enc.setStatus(toStatus);
+        Encounter saved = encRepo.save(enc);
+
+        if (toStatus == EncounterStatus.PUBLISHED) {
+            events.publishEvent(new EncounterPublishedEvent(
+                saved.getId(),
+                saved.getProjectId(),
+                saved.getSpecies(),
+                SecurityUtils.currentUserId(),
+                Instant.now()
+            ));
+        }
+        return saved;
     }
 
     /**
