@@ -60,6 +60,27 @@ public class NotificationListener {
     }
 
     /**
+     * Direct (not fan-out) notification to the assignee — one row, one
+     * recipient. Same async + after-commit + REQUIRES_NEW guarantees.
+     */
+    @Async("applicationTaskExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onEncounterAssigned(EncounterAssignedEvent event) {
+        log.info("[notification] encounter={} assigned to user={}",
+            event.encounterId(), event.assigneeUserId());
+        notificationRepo.save(new Notification(
+            event.assigneeUserId(),
+            Notification.Kind.ENCOUNTER_ASSIGNED,
+            "Encounter assigned to you",
+            "Encounter #" + event.encounterId()
+                + " was assigned to you by user " + event.assignedByUserId(),
+            "encounter",
+            event.encounterId()
+        ));
+    }
+
+    /**
      * Fan-out on publish — same async + after-commit + REQUIRES_NEW
      * pattern as encounter-created, different body. Same listener bean
      * by design: "things that happen to encounters" naturally cluster.

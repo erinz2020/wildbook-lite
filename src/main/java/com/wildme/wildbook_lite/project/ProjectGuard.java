@@ -39,6 +39,17 @@ public class ProjectGuard {
         return hasAtLeast(projectId, ProjectRole.OWNER);
     }
 
+    /**
+     * Membership probe for an *arbitrary* user (not the caller).
+     * Used when validating that a target user belongs to the project
+     * before we hand them work, e.g., encounter assignment.
+     */
+    @Transactional(readOnly = true)
+    public boolean isMember(Long projectId, Long userId) {
+        if (projectId == null || userId == null) return false;
+        return memberRepository.findByProjectIdAndUserId(projectId, userId).isPresent();
+    }
+
     /** Pulled out for callers that need to compare against a min role chosen at runtime (e.g., state-machine transitions). */
     @Transactional(readOnly = true)
     public boolean hasAtLeast(Long projectId, ProjectRole required) {

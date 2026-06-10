@@ -31,6 +31,7 @@ public class Notification extends BaseEntity {
     public enum Kind {
         ENCOUNTER_CREATED,
         ENCOUNTER_PUBLISHED,
+        ENCOUNTER_ASSIGNED,
         COMMENT_ADDED,
         PROJECT_INVITED
     }

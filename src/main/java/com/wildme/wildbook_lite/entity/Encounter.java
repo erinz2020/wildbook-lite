@@ -56,6 +56,15 @@ public class Encounter {
     @Column(length = 16)
     private EncounterStatus status = EncounterStatus.DRAFT;
 
+    /**
+     * Optional reviewer / responsible user. We deliberately store just
+     * the id (not a JPA relation): User and Encounter live in different
+     * aggregates, so navigating with @ManyToOne would tempt callers to
+     * fetch users transitively and ruin the lazy-loading contract.
+     */
+    @Column(name = "assigned_to_user_id")
+    private Long assignedToUserId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "individual_id")
     private Individual individual;
@@ -97,6 +106,9 @@ public class Encounter {
 
     public EncounterStatus getStatus() { return status; }
     public void setStatus(EncounterStatus status) { this.status = status; }
+
+    public Long getAssignedToUserId() { return assignedToUserId; }
+    public void setAssignedToUserId(Long assignedToUserId) { this.assignedToUserId = assignedToUserId; }
 
     public Individual getIndividual() { return individual; }
     public void setIndividual(Individual individual) { this.individual = individual; }

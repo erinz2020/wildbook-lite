@@ -20,10 +20,13 @@ import com.wildme.wildbook_lite.common.ForbiddenException;
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
 import com.wildme.wildbook_lite.encounter.EncounterStatus;
+import com.wildme.wildbook_lite.encounter.EncounterStatusHistory;
+import com.wildme.wildbook_lite.encounter.EncounterStatusHistoryRepository;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.entity.Individual;
 import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
+import com.wildme.wildbook_lite.notification.EncounterAssignedEvent;
 import com.wildme.wildbook_lite.notification.EncounterCreatedEvent;
 import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
 import com.wildme.wildbook_lite.project.ProjectGuard;
@@ -37,17 +40,20 @@ public class EncounterService {
     private final EncounterRepository encRepo;
     private final IndividualRepository indRepo;
     private final EncounterTagRepository encTagRepo;
+    private final EncounterStatusHistoryRepository historyRepo;
     private final ProjectGuard projectGuard;
     private final ApplicationEventPublisher events;
 
     public EncounterService(EncounterRepository encRepo,
                             IndividualRepository indRepo,
                             EncounterTagRepository encTagRepo,
+                            EncounterStatusHistoryRepository historyRepo,
                             ProjectGuard projectGuard,
                             ApplicationEventPublisher events) {
         this.encRepo = encRepo;
         this.indRepo = indRepo;
         this.encTagRepo = encTagRepo;
+        this.historyRepo = historyRepo;
         this.projectGuard = projectGuard;
         this.events = events;
     }
@@ -73,6 +79,7 @@ public class EncounterService {
                                    String species,
                                    String location,
                                    EncounterStatus status,
+                                   Long assignedToUserId,
                                    List<Long> tagIds,
                                    Pageable pageable) {
         if (projectId == null) {
@@ -91,6 +98,9 @@ public class EncounterService {
         }
         if (status != null) {
             spec = spec.and((root, q, cb) -> cb.equal(root.get("status"), status));
+        }
+        if (assignedToUserId != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("assignedToUserId"), assignedToUserId));
         }
         if (tagIds != null && !tagIds.isEmpty()) {
             List<Long> matchingIds = encTagRepo.findEncounterIdsWithAllTags(tagIds, tagIds.size());
@@ -146,19 +156,69 @@ public class EncounterService {
         if (!projectGuard.canWrite(request.projectId())) {
             throw new ForbiddenException("No write access to project: " + request.projectId());
         }
+        Long currentUserId = SecurityUtils.currentUserId();
+
         Encounter encounter = new Encounter();
         encounter.setProjectId(request.projectId());
         encounter.setLocation(request.location());
         encounter.setSpecies(request.species());
         Encounter saved = encRepo.save(encounter);
 
+        // Seed the workflow timeline: null → DRAFT, "created" comment.
+        historyRepo.save(new EncounterStatusHistory(
+            saved.getId(), null, EncounterStatus.DRAFT, currentUserId, "created"));
+
         events.publishEvent(new EncounterCreatedEvent(
             saved.getId(),
             saved.getProjectId(),
-            SecurityUtils.currentUserId(),
+            currentUserId,
             Instant.now()
         ));
         return saved;
+    }
+
+    /**
+     * Assign (or re-assign) an encounter to a project member.
+     *
+     *   - Must be a project member already (no cross-project leaks).
+     *   - Fires EncounterAssignedEvent → direct notification to the assignee.
+     *
+     * No status transition happens here; assignment is orthogonal to
+     * workflow (you can assign a DRAFT to a reviewer who pushes it to
+     * REVIEWED, or assign a PUBLISHED encounter to a curator).
+     */
+    @Audited("encounter.assign")
+    @CacheEvict(value = "encounter", key = "#id")
+    @Transactional
+    public Encounter assignTo(Long id, Long assigneeUserId) {
+        Encounter enc = encRepo.findById(id)
+            .orElseThrow(() -> new NotFoundException("Encounter not found: " + id));
+        requireWriteAccess(enc);
+
+        if (assigneeUserId != null && !projectGuard.isMember(enc.getProjectId(), assigneeUserId)) {
+            throw new BusinessException("Assignee is not a member of this project");
+        }
+        enc.setAssignedToUserId(assigneeUserId);
+        Encounter saved = encRepo.save(enc);
+
+        if (assigneeUserId != null) {
+            events.publishEvent(new EncounterAssignedEvent(
+                saved.getId(),
+                saved.getProjectId(),
+                assigneeUserId,
+                SecurityUtils.currentUserId(),
+                Instant.now()
+            ));
+        }
+        return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public List<EncounterStatusHistory> listHistory(Long encounterId) {
+        Encounter enc = encRepo.findById(encounterId)
+            .orElseThrow(() -> new NotFoundException("Encounter not found: " + encounterId));
+        requireReadAccess(enc);
+        return historyRepo.findByEncounterIdOrderByCreatedAtAsc(encounterId);
     }
 
     @Transactional
@@ -215,8 +275,18 @@ public class EncounterService {
                 + " requires project role " + allowed.minRole());
         }
 
+        EncounterStatus previous = current;
         enc.setStatus(toStatus);
         Encounter saved = encRepo.save(enc);
+
+        // Append to the workflow timeline.
+        historyRepo.save(new EncounterStatusHistory(
+            saved.getId(),
+            previous,
+            toStatus,
+            SecurityUtils.currentUserId(),
+            null
+        ));
 
         if (toStatus == EncounterStatus.PUBLISHED) {
             events.publishEvent(new EncounterPublishedEvent(
