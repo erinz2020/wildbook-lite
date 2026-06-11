@@ -4,53 +4,44 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.wildme.wildbook_lite.auth.dto.AuthResponse;
 import com.wildme.wildbook_lite.auth.dto.LoginRequest;
 import com.wildme.wildbook_lite.auth.dto.RefreshRequest;
-import com.wildme.wildbook_lite.auth.dto.RegisterRequest;
 import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
 
+/**
+ * Authentication operations: login / refresh / logout.
+ *
+ * Note that user *creation* lives in UserManagementService now —
+ * because:
+ *  - public self-registration is removed (admin-only path)
+ *  - issuing access tokens (an Auth concern) and creating user rows
+ *    (a User-Management concern) are two different jobs; mixing them
+ *    pulls Auth into managing role policy, which it shouldn't.
+ */
 @Service
 public class AuthService {
 
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
     private final AuthMetrics metrics;
 
     public AuthService(UserRepository userRepository,
-                       PasswordEncoder passwordEncoder,
                        AuthenticationManager authenticationManager,
                        JwtService jwtService,
                        RefreshTokenService refreshTokenService,
                        AuthMetrics metrics) {
         this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.metrics = metrics;
-    }
-
-    @Transactional
-    public AuthResponse register(RegisterRequest req) {
-        if (userRepository.existsByUsername(req.username())) {
-            throw new BusinessException("Username already taken");
-        }
-        if (userRepository.existsByEmail(req.email())) {
-            throw new BusinessException("Email already registered");
-        }
-        User user = new User(req.username(), req.email(), passwordEncoder.encode(req.password()));
-        userRepository.save(user);
-        metrics.onRegisterSuccess();
-        return issuePair(user);
     }
 
     @Transactional

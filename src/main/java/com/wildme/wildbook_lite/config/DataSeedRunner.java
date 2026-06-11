@@ -62,7 +62,7 @@ public class DataSeedRunner implements ApplicationRunner {
         }
         User admin = new User("admin", "admin@wildbook.local",
                               passwordEncoder.encode("admin12345"));
-        admin.setRoles(EnumSet.of(Role.ADMIN, Role.USER));
+        admin.setRoles(EnumSet.of(Role.ADMIN, Role.RESEARCHER));
         userRepository.save(admin);
         log.warn("[seed] created default admin user 'admin' / 'admin12345' — CHANGE BEFORE DEPLOY");
     }

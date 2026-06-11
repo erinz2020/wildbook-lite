@@ -59,7 +59,7 @@ class UserRepositoryIT extends AbstractPostgresIT {
             .get()
             .satisfies(found -> {
                 assertThat(found.getEmail()).isEqualTo("alice@x.com");
-                assertThat(found.getRoles()).containsExactly(Role.USER);
+                assertThat(found.getRoles()).containsExactly(Role.RESEARCHER);
                 assertThat(found.getCreatedAt()).isNotNull(); // JPA auditing populated it
             });
     }

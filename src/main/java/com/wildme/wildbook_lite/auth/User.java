@@ -47,7 +47,7 @@ public class User extends BaseEntity {
     )
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false, length = 32)
-    private Set<Role> roles = EnumSet.of(Role.USER);
+    private Set<Role> roles = EnumSet.of(Role.RESEARCHER);
 
     public User() {}
 

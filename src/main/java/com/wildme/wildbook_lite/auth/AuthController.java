@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.wildme.wildbook_lite.auth.dto.AuthResponse;
 import com.wildme.wildbook_lite.auth.dto.LoginRequest;
 import com.wildme.wildbook_lite.auth.dto.RefreshRequest;
-import com.wildme.wildbook_lite.auth.dto.RegisterRequest;
 
 import jakarta.validation.Valid;
 
@@ -23,10 +22,9 @@ public class AuthController {
         this.authService = authService;
     }
 
-    @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req) {
-        return ResponseEntity.ok(authService.register(req));
-    }
+    // NOTE: public POST /register was removed. New users must be created
+    // by an admin via POST /api/users. This is a deliberate policy choice:
+    // a research platform should not have an open sign-up surface.
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest req) {
