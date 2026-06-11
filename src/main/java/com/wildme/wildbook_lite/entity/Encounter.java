@@ -65,6 +65,17 @@ public class Encounter {
     @Column(name = "assigned_to_user_id")
     private Long assignedToUserId;
 
+    /**
+     * Who *submitted* this encounter. Distinct from:
+     *   - Observer (the field researcher who saw it; may not have an account)
+     *   - assignedToUserId (the current reviewer)
+     *   - audit_log entries (technical record, may be ADMIN acting on behalf)
+     *
+     * Set once at creation/report time. Used for "my reports" queries.
+     */
+    @Column(name = "submitter_user_id")
+    private Long submitterUserId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "individual_id")
     private Individual individual;
@@ -109,6 +120,9 @@ public class Encounter {
 
     public Long getAssignedToUserId() { return assignedToUserId; }
     public void setAssignedToUserId(Long assignedToUserId) { this.assignedToUserId = assignedToUserId; }
+
+    public Long getSubmitterUserId() { return submitterUserId; }
+    public void setSubmitterUserId(Long submitterUserId) { this.submitterUserId = submitterUserId; }
 
     public Individual getIndividual() { return individual; }
     public void setIndividual(Individual individual) { this.individual = individual; }

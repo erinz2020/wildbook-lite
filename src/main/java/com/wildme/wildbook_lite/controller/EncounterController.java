@@ -19,6 +19,7 @@ import com.wildme.wildbook_lite.dto.AssignEncounterRequest;
 import com.wildme.wildbook_lite.dto.BulkResult;
 import com.wildme.wildbook_lite.dto.BulkTransitionRequest;
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
+import com.wildme.wildbook_lite.dto.ReportEncounterRequest;
 import com.wildme.wildbook_lite.dto.TransitionEncounterRequest;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
 import com.wildme.wildbook_lite.encounter.EncounterStatus;
@@ -43,11 +44,12 @@ public class EncounterController {
 
     /**
      * GET /api/encounters?projectId=1
-     *                    &species=...           (optional)
-     *                    &location=...          (optional)
-     *                    &status=PUBLISHED      (optional)
-     *                    &assignedToUserId=42   (optional)
-     *                    &tagIds=4&tagIds=7     (optional, AND semantics)
+     *                    &species=...             (optional)
+     *                    &location=...            (optional)
+     *                    &status=PUBLISHED        (optional)
+     *                    &assignedToUserId=42     (optional, "my queue")
+     *                    &submitterUserId=42      (optional, "my reports")
+     *                    &tagIds=4&tagIds=7       (optional, AND semantics)
      *                    &page=0&size=20
      */
     @GetMapping
@@ -57,10 +59,11 @@ public class EncounterController {
             @RequestParam(required = false) String location,
             @RequestParam(required = false) EncounterStatus status,
             @RequestParam(required = false) Long assignedToUserId,
+            @RequestParam(required = false) Long submitterUserId,
             @RequestParam(required = false) List<Long> tagIds,
             @PageableDefault(size = 50) Pageable pageable) {
         return service.findAll(projectId, species, location, status,
-                               assignedToUserId, tagIds, pageable);
+                               assignedToUserId, submitterUserId, tagIds, pageable);
     }
 
     @GetMapping("/{id}")
@@ -81,6 +84,37 @@ public class EncounterController {
     @PostMapping
     public Encounter create(@Valid @RequestBody CreateEncounterRequest request) {
         return service.create(request);
+    }
+
+    /**
+     * Higher-level "file a report" endpoint. Bundles the encounter
+     * creation with optional Individual / Observer linking and the
+     * consolidation of orphan Sightings.
+     *
+     *   POST /api/encounters/report
+     *   {
+     *     "projectId": 1,
+     *     "species": "Humpback whale",
+     *     "location": "Maui",
+     *     "encounterDate": "2026-06-11T08:30:00",
+     *     "notes": "calf and mother",
+     *     "individualId": 7,
+     *     "observerId": 12,
+     *     "sightingIds": [21, 22]
+     *   }
+     *
+     * Why a separate endpoint and not "just POST /api/encounters with
+     * extra fields":
+     *   - Different intent: this one consolidates orphan data.
+     *   - Different validation surface: species ↔ individual match,
+     *     sighting re-parenting check.
+     *   - Future-proofs: if we want to add a draft-save / multi-step
+     *     wizard, the endpoint stays cleanly separated from the
+     *     minimal POST that just creates an empty encounter.
+     */
+    @PostMapping("/report")
+    public Encounter report(@Valid @RequestBody ReportEncounterRequest request) {
+        return service.reportEncounter(request);
     }
 
     @PatchMapping("/{id}/individual")

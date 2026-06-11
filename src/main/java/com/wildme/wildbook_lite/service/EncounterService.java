@@ -18,12 +18,15 @@ import com.wildme.wildbook_lite.auth.SecurityUtils;
 import com.wildme.wildbook_lite.common.Audited;
 import com.wildme.wildbook_lite.common.ForbiddenException;
 import com.wildme.wildbook_lite.dto.CreateEncounterRequest;
+import com.wildme.wildbook_lite.dto.ReportEncounterRequest;
 import com.wildme.wildbook_lite.dto.UpdateEncounterRequest;
 import com.wildme.wildbook_lite.encounter.EncounterStatus;
 import com.wildme.wildbook_lite.encounter.EncounterStatusHistory;
 import com.wildme.wildbook_lite.encounter.EncounterStatusHistoryRepository;
 import com.wildme.wildbook_lite.entity.Encounter;
 import com.wildme.wildbook_lite.entity.Individual;
+import com.wildme.wildbook_lite.entity.Observer;
+import com.wildme.wildbook_lite.entity.Sighting;
 import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.notification.EncounterAssignedEvent;
@@ -32,6 +35,8 @@ import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
 import com.wildme.wildbook_lite.project.ProjectGuard;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.repository.IndividualRepository;
+import com.wildme.wildbook_lite.repository.ObserverRepository;
+import com.wildme.wildbook_lite.repository.SightingRepository;
 import com.wildme.wildbook_lite.tag.EncounterTagRepository;
 
 @Service
@@ -39,6 +44,8 @@ public class EncounterService {
 
     private final EncounterRepository encRepo;
     private final IndividualRepository indRepo;
+    private final ObserverRepository obsRepo;
+    private final SightingRepository sightingRepo;
     private final EncounterTagRepository encTagRepo;
     private final EncounterStatusHistoryRepository historyRepo;
     private final ProjectGuard projectGuard;
@@ -46,12 +53,16 @@ public class EncounterService {
 
     public EncounterService(EncounterRepository encRepo,
                             IndividualRepository indRepo,
+                            ObserverRepository obsRepo,
+                            SightingRepository sightingRepo,
                             EncounterTagRepository encTagRepo,
                             EncounterStatusHistoryRepository historyRepo,
                             ProjectGuard projectGuard,
                             ApplicationEventPublisher events) {
         this.encRepo = encRepo;
         this.indRepo = indRepo;
+        this.obsRepo = obsRepo;
+        this.sightingRepo = sightingRepo;
         this.encTagRepo = encTagRepo;
         this.historyRepo = historyRepo;
         this.projectGuard = projectGuard;
@@ -80,6 +91,7 @@ public class EncounterService {
                                    String location,
                                    EncounterStatus status,
                                    Long assignedToUserId,
+                                   Long submitterUserId,
                                    List<Long> tagIds,
                                    Pageable pageable) {
         if (projectId == null) {
@@ -101,6 +113,9 @@ public class EncounterService {
         }
         if (assignedToUserId != null) {
             spec = spec.and((root, q, cb) -> cb.equal(root.get("assignedToUserId"), assignedToUserId));
+        }
+        if (submitterUserId != null) {
+            spec = spec.and((root, q, cb) -> cb.equal(root.get("submitterUserId"), submitterUserId));
         }
         if (tagIds != null && !tagIds.isEmpty()) {
             List<Long> matchingIds = encTagRepo.findEncounterIdsWithAllTags(tagIds, tagIds.size());
@@ -162,6 +177,7 @@ public class EncounterService {
         encounter.setProjectId(request.projectId());
         encounter.setLocation(request.location());
         encounter.setSpecies(request.species());
+        encounter.setSubmitterUserId(currentUserId);
         Encounter saved = encRepo.save(encounter);
 
         // Seed the workflow timeline: null → DRAFT, "created" comment.
@@ -173,6 +189,103 @@ public class EncounterService {
             saved.getProjectId(),
             currentUserId,
             Instant.now()
+        ));
+        return saved;
+    }
+
+    /**
+     * High-level "I want to file an encounter report" path.
+     *
+     * Validation chain — fail fast on each, never half-commit:
+     *   1. Project write access (caller must be EDITOR+ on the project).
+     *   2. If individualId provided, individual must exist AND species
+     *      must match the reported encounter species (no whales tagged
+     *      as turtles).
+     *   3. If observerId provided, observer must exist.
+     *   4. If sightingIds provided, every sighting must exist and must
+     *      NOT already belong to a different Encounter (no silent
+     *      re-parenting — that would be a foot-gun).
+     *
+     * Side effects (all inside the same transaction so a late failure
+     * rolls back everything cleanly):
+     *   - Encounter row created in DRAFT
+     *   - submitterUserId = current user (NOT from the request body —
+     *     clients can't impersonate)
+     *   - Sightings re-pointed to this Encounter (sets encounter_id)
+     *   - Initial null→DRAFT row in encounter_status_history
+     *   - EncounterCreatedEvent → async fanout to project members
+     */
+    @Audited("encounter.report")
+    @Transactional
+    public Encounter reportEncounter(ReportEncounterRequest req) {
+        if (!projectGuard.canWrite(req.projectId())) {
+            throw new ForbiddenException("No write access to project: " + req.projectId());
+        }
+        Long currentUserId = SecurityUtils.currentUserId();
+
+        // ---- resolve & validate optional links BEFORE we write anything ----
+        Individual individual = null;
+        if (req.individualId() != null) {
+            individual = indRepo.findById(req.individualId())
+                .orElseThrow(() -> new NotFoundException("Individual not found: " + req.individualId()));
+            if (req.species() != null && individual.getSpecies() != null
+                && !req.species().equalsIgnoreCase(individual.getSpecies())) {
+                throw new BusinessException(
+                    "Species mismatch: encounter=" + req.species()
+                    + " vs individual=" + individual.getSpecies());
+            }
+        }
+
+        Observer observer = null;
+        if (req.observerId() != null) {
+            observer = obsRepo.findById(req.observerId())
+                .orElseThrow(() -> new NotFoundException("Observer not found: " + req.observerId()));
+        }
+
+        List<Sighting> sightings = List.of();
+        if (req.sightingIds() != null && !req.sightingIds().isEmpty()) {
+            sightings = sightingRepo.findAllById(req.sightingIds());
+            if (sightings.size() != req.sightingIds().size()) {
+                throw new NotFoundException("One or more sightings not found");
+            }
+            for (Sighting s : sightings) {
+                if (s.getEncounter() != null) {
+                    throw new BusinessException(
+                        "Sighting " + s.getId() + " already belongs to encounter "
+                        + s.getEncounter().getId() + "; detach it first");
+                }
+            }
+        }
+
+        // ---- create the Encounter ----
+        Encounter enc = new Encounter();
+        enc.setProjectId(req.projectId());
+        enc.setSpecies(req.species());
+        enc.setLocation(req.location());
+        enc.setNotes(req.notes());
+        enc.setEncounterDate(req.encounterDate());
+        enc.setIndividual(individual);
+        enc.setObserver(observer);
+        enc.setSubmitterUserId(currentUserId);
+        Encounter saved = encRepo.save(enc);
+
+        // ---- attach sightings (now that we have the encounter id) ----
+        for (Sighting s : sightings) {
+            s.setEncounter(saved);
+            // observer-on-sighting carries over if not already set
+            if (s.getObserver() == null && observer != null) {
+                s.setObserver(observer);
+            }
+            sightingRepo.save(s);
+        }
+
+        // ---- workflow timeline + event ----
+        historyRepo.save(new EncounterStatusHistory(
+            saved.getId(), null, EncounterStatus.DRAFT, currentUserId,
+            "reported with " + sightings.size() + " sighting(s)"
+        ));
+        events.publishEvent(new EncounterCreatedEvent(
+            saved.getId(), saved.getProjectId(), currentUserId, Instant.now()
         ));
         return saved;
     }
