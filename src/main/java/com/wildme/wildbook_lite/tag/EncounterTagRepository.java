@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -22,4 +23,8 @@ public interface EncounterTagRepository extends JpaRepository<EncounterTag, Long
         """)
     List<Long> findEncounterIdsWithAllTags(@Param("tagIds") List<Long> tagIds,
                                            @Param("tagCount") long tagCount);
+
+    @Modifying
+    @Query("delete from EncounterTag et where et.encounterId = :encounterId")
+    int deleteByEncounterId(@Param("encounterId") Long encounterId);
 }

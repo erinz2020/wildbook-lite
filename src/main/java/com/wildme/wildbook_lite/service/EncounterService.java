@@ -32,9 +32,11 @@ import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.notification.EncounterAssignedEvent;
 import com.wildme.wildbook_lite.notification.EncounterCreatedEvent;
 import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
+import com.wildme.wildbook_lite.comment.CommentRepository;
 import com.wildme.wildbook_lite.project.ProjectGuard;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
 import com.wildme.wildbook_lite.repository.IndividualRepository;
+import com.wildme.wildbook_lite.repository.MediaAssetRepository;
 import com.wildme.wildbook_lite.repository.ObserverRepository;
 import com.wildme.wildbook_lite.repository.SightingRepository;
 import com.wildme.wildbook_lite.tag.EncounterTagRepository;
@@ -46,6 +48,8 @@ public class EncounterService {
     private final IndividualRepository indRepo;
     private final ObserverRepository obsRepo;
     private final SightingRepository sightingRepo;
+    private final CommentRepository commentRepo;
+    private final MediaAssetRepository mediaRepo;
     private final EncounterTagRepository encTagRepo;
     private final EncounterStatusHistoryRepository historyRepo;
     private final ProjectGuard projectGuard;
@@ -55,6 +59,8 @@ public class EncounterService {
                             IndividualRepository indRepo,
                             ObserverRepository obsRepo,
                             SightingRepository sightingRepo,
+                            CommentRepository commentRepo,
+                            MediaAssetRepository mediaRepo,
                             EncounterTagRepository encTagRepo,
                             EncounterStatusHistoryRepository historyRepo,
                             ProjectGuard projectGuard,
@@ -63,6 +69,8 @@ public class EncounterService {
         this.indRepo = indRepo;
         this.obsRepo = obsRepo;
         this.sightingRepo = sightingRepo;
+        this.commentRepo = commentRepo;
+        this.mediaRepo = mediaRepo;
         this.encTagRepo = encTagRepo;
         this.historyRepo = historyRepo;
         this.projectGuard = projectGuard;
@@ -142,6 +150,38 @@ public class EncounterService {
         return e;
     }
 
+    /**
+     * Hard delete an Encounter and clean up everything that points at it.
+     *
+     * Why hard delete instead of soft delete:
+     *   The user-facing workflow uses status=ARCHIVED for the soft case
+     *   (preserves history, hides from views). DELETE is the harder
+     *   "this should never have existed" path — e.g., a test-data row.
+     *
+     * Order matters because of FK constraints in Postgres:
+     *
+     *   1. Children that point AT this encounter (FK encounter_id):
+     *        sightings, comments, media, encounter_tags, status_history
+     *      → must be deleted first.
+     *
+     *   2. Parents that this encounter points AT (individual_id,
+     *      observer_id, project_id):
+     *      → no DB cleanup needed — the parent row stays, only OUR FK
+     *        goes away when we delete the row. But we DO touch the
+     *        in-memory collection (individual.encounters,
+     *        observer.encounters) to keep any already-loaded entities
+     *        in the current session consistent.
+     *
+     *   3. Finally, delete the encounter itself.
+     *
+     * All wrapped in @Transactional, so a failure anywhere rolls the
+     * whole thing back — no half-deleted encounter sitting around.
+     *
+     * Note on media files on disk: we only drop the DB rows here. The
+     * actual blob files are left for a separate cleanup job to reap
+     * (deletion of disk files is non-transactional and must not happen
+     * inside the DB tx — we'd leak files on rollback).
+     */
     @Audited("encounter.delete")
     @CacheEvict(value = "encounter", key = "#id")
     @Transactional
@@ -149,9 +189,40 @@ public class EncounterService {
         Encounter e = encRepo.findById(id)
             .orElseThrow(() -> new NotFoundException("Encounter not found: " + id));
         requireWriteAccess(e);
+
+        // --- 1. detach from parent in-memory collections, so a session
+        //        that has the parent loaded sees a consistent view.
+        if (e.getIndividual() != null) {
+            e.getIndividual().getEncounters().remove(e);
+        }
+        if (e.getObserver() != null) {
+            e.getObserver().getEncounters().remove(e);
+        }
+
+        // --- 2. wipe all child rows (bulk @Modifying — fast, no listeners).
+        sightingRepo.deleteByEncounterId(id);
+        commentRepo.deleteByEncounterId(id);
+        mediaRepo.deleteByEncounterId(id);
+        encTagRepo.deleteByEncounterId(id);
+        historyRepo.deleteByEncounterId(id);
+
+        // --- 3. flush so the bulk DELETEs land in the DB BEFORE Hibernate
+        //        tries to remove the parent row. Otherwise the auto-flush
+        //        order can put the parent delete first → FK violation.
+        encRepo.flush();
+
+        // --- 4. finally drop the encounter itself.
         encRepo.delete(e);
     }
 
+    /**
+     * Partial update. Only fields with non-null values in the request
+     * are applied (PATCH semantics, not PUT).
+     *
+     * Relation updates (individualId, observerId) re-run the same
+     * coherence checks as the report flow — species mismatch is still
+     * a hard reject, even on update.
+     */
     @Audited("encounter.update")
     @CacheEvict(value = "encounter", key = "#id")
     @Transactional
@@ -160,8 +231,30 @@ public class EncounterService {
             .orElseThrow(() -> new NotFoundException("Encounter not found: " + id));
         requireWriteAccess(encounter);
 
-        if (request.location() != null) encounter.setLocation(request.location());
-        if (request.species()  != null) encounter.setSpecies(request.species());
+        if (request.location() != null)      encounter.setLocation(request.location());
+        if (request.species() != null)       encounter.setSpecies(request.species());
+        if (request.encounterDate() != null) encounter.setEncounterDate(request.encounterDate());
+        if (request.notes() != null)         encounter.setNotes(request.notes());
+
+        if (request.individualId() != null) {
+            Individual ind = indRepo.findById(request.individualId())
+                .orElseThrow(() -> new NotFoundException("Individual not found: " + request.individualId()));
+            String finalSpecies = encounter.getSpecies();
+            if (finalSpecies != null && ind.getSpecies() != null
+                && !finalSpecies.equalsIgnoreCase(ind.getSpecies())) {
+                throw new BusinessException(
+                    "Species mismatch: encounter=" + finalSpecies
+                    + " vs individual=" + ind.getSpecies());
+            }
+            encounter.setIndividual(ind);
+        }
+
+        if (request.observerId() != null) {
+            Observer obs = obsRepo.findById(request.observerId())
+                .orElseThrow(() -> new NotFoundException("Observer not found: " + request.observerId()));
+            encounter.setObserver(obs);
+        }
+
         return encRepo.save(encounter);
     }
 
