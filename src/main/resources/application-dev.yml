@@ -34,3 +34,11 @@ app:
     token-cleanup-cron: "0 0 3 * * *"            # every day at 03:00
     notification-cleanup-cron: "0 0 4 * * *"     # every day at 04:00
     notification-retention-days: 30
+  opensearch:
+    enabled: false                # flip to true after `docker compose up opensearch`
+    host: localhost
+    port: 9200
+    scheme: http
+    index-name: encounters
+    username: ""                  # security plugin disabled in dev
+    password: ""

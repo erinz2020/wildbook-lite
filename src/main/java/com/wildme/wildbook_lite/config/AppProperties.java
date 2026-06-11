@@ -28,7 +28,8 @@ import jakarta.validation.constraints.Size;
 public record AppProperties(
     @Valid Jwt jwt,
     @Valid Storage storage,
-    @Valid Scheduling scheduling
+    @Valid Scheduling scheduling,
+    @Valid OpenSearch opensearch
 ) {
     public record Jwt(
         @NotBlank @Size(min = 32, message = "must be >= 32 bytes for HS256") String secret,
@@ -45,5 +46,22 @@ public record AppProperties(
         @NotBlank String tokenCleanupCron,
         @NotBlank String notificationCleanupCron,
         @Min(1) int notificationRetentionDays
+    ) {}
+
+    /**
+     * OpenSearch connection info. `enabled=false` skips the client bean
+     * entirely; the app boots without OS being up.
+     *
+     * username/password are optional — empty strings mean "no auth"
+     * (matches the security-plugin-disabled docker-compose setup).
+     */
+    public record OpenSearch(
+        boolean enabled,
+        @NotBlank String host,
+        @Min(1) int port,
+        @NotBlank String scheme,
+        @NotBlank String indexName,
+        String username,
+        String password
     ) {}
 }

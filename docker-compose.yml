@@ -17,5 +17,37 @@ services:
       timeout: 3s
       retries: 10
 
+  # ------------------------------------------------------------
+  # OpenSearch single-node. Security plugin disabled for dev so
+  # we don't have to deal with TLS + basic auth + the demo certs
+  # bundle. In prod you'd flip plugins.security.disabled=false
+  # and run behind an opensearch-security config + TLS.
+  # ------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.18.0
+    container_name: wildbook-opensearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   pgdata:
+  osdata:

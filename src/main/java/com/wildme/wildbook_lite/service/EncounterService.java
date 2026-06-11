@@ -32,6 +32,7 @@ import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.notification.EncounterAssignedEvent;
 import com.wildme.wildbook_lite.notification.EncounterCreatedEvent;
 import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
+import com.wildme.wildbook_lite.search.opensearch.EncounterChangedEvent;
 import com.wildme.wildbook_lite.comment.CommentRepository;
 import com.wildme.wildbook_lite.project.ProjectGuard;
 import com.wildme.wildbook_lite.repository.EncounterRepository;
@@ -213,6 +214,9 @@ public class EncounterService {
 
         // --- 4. finally drop the encounter itself.
         encRepo.delete(e);
+
+        // --- 5. tell the indexer to remove the doc.
+        events.publishEvent(new EncounterChangedEvent(id, EncounterChangedEvent.Kind.DELETE));
     }
 
     /**
@@ -255,7 +259,9 @@ public class EncounterService {
             encounter.setObserver(obs);
         }
 
-        return encRepo.save(encounter);
+        Encounter saved = encRepo.save(encounter);
+        events.publishEvent(new EncounterChangedEvent(saved.getId(), EncounterChangedEvent.Kind.UPSERT));
+        return saved;
     }
 
     @Audited("encounter.create")
@@ -283,6 +289,7 @@ public class EncounterService {
             currentUserId,
             Instant.now()
         ));
+        events.publishEvent(new EncounterChangedEvent(saved.getId(), EncounterChangedEvent.Kind.UPSERT));
         return saved;
     }
 
@@ -380,6 +387,7 @@ public class EncounterService {
         events.publishEvent(new EncounterCreatedEvent(
             saved.getId(), saved.getProjectId(), currentUserId, Instant.now()
         ));
+        events.publishEvent(new EncounterChangedEvent(saved.getId(), EncounterChangedEvent.Kind.UPSERT));
         return saved;
     }
 
@@ -416,6 +424,7 @@ public class EncounterService {
                 Instant.now()
             ));
         }
+        events.publishEvent(new EncounterChangedEvent(saved.getId(), EncounterChangedEvent.Kind.UPSERT));
         return saved;
     }
 
@@ -503,6 +512,7 @@ public class EncounterService {
                 Instant.now()
             ));
         }
+        events.publishEvent(new EncounterChangedEvent(saved.getId(), EncounterChangedEvent.Kind.UPSERT));
         return saved;
     }
 

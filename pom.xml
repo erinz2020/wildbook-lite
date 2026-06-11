@@ -64,6 +64,17 @@
 			<version>2.0.10</version>
 		</dependency>
 		<dependency>
+			<groupId>org.opensearch.client</groupId>
+			<artifactId>opensearch-java</artifactId>
+			<version>2.21.0</version>
+		</dependency>
+		<!-- Apache HttpClient 5 — transport for opensearch-java. Pulled
+		     in explicitly because opensearch-java declares it `provided`. -->
+		<dependency>
+			<groupId>org.apache.httpcomponents.client5</groupId>
+			<artifactId>httpclient5</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>com.github.ben-manes.caffeine</groupId>
 			<artifactId>caffeine</artifactId>
 		</dependency>
