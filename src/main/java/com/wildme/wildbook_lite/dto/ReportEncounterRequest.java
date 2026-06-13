@@ -51,5 +51,12 @@ public record ReportEncounterRequest(
      * rejected at the service layer (no silent re-parenting).
      */
     @Size(max = 50, message = "max 50 sightings per report")
-    List<Long> sightingIds
+    List<Long> sightingIds,
+
+    /**
+     * Optional: attach the new Encounter to an existing Occurrence
+     * (survey group event). The Occurrence must belong to the same
+     * project; service rejects mismatches.
+     */
+    Long occurrenceId
 ) {}

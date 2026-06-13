@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.wildme.wildbook_lite.encounter.EncounterStatus;
+import com.wildme.wildbook_lite.occurrence.Occurrence;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -27,7 +28,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 @Table(name = "encounter", indexes = {
     @Index(name = "ix_encounter_project", columnList = "project_id"),
     @Index(name = "ix_encounter_species", columnList = "species"),
-    @Index(name = "ix_encounter_status", columnList = "status")
+    @Index(name = "ix_encounter_status", columnList = "status"),
+    @Index(name = "ix_encounter_occurrence", columnList = "occurrence_id")
 })
 public class Encounter {
 
@@ -84,6 +86,18 @@ public class Encounter {
     @JoinColumn(name = "observer_id")
     private Observer observer;
 
+    /**
+     * Optional parent group event. Many encounters can share one
+     * Occurrence (single survey, multiple animals). FK lives on this
+     * side; Occurrence exposes the reverse as @OneToMany(mappedBy="occurrence").
+     *
+     * Nullable on purpose — solo encounters (e.g., a single opportunistic
+     * sighting) don't need to be tied to a survey event.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "occurrence_id")
+    private Occurrence occurrence;
+
     @JsonIgnore
     @OneToMany(mappedBy = "encounter")
     private List<MediaAsset> mediaAssets = new ArrayList<>();
@@ -129,6 +143,9 @@ public class Encounter {
 
     public Observer getObserver() { return observer; }
     public void setObserver(Observer observer) { this.observer = observer; }
+
+    public Occurrence getOccurrence() { return occurrence; }
+    public void setOccurrence(Occurrence occurrence) { this.occurrence = occurrence; }
 
     public List<Sighting> getSightings() { return sightings; }
     public void setSightings(List<Sighting> sightings) { this.sightings = sightings; }

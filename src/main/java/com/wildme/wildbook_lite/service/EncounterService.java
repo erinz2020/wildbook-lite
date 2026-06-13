@@ -29,6 +29,8 @@ import com.wildme.wildbook_lite.entity.Observer;
 import com.wildme.wildbook_lite.entity.Sighting;
 import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
+import com.wildme.wildbook_lite.occurrence.Occurrence;
+import com.wildme.wildbook_lite.occurrence.OccurrenceRepository;
 import com.wildme.wildbook_lite.notification.EncounterAssignedEvent;
 import com.wildme.wildbook_lite.notification.EncounterCreatedEvent;
 import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
@@ -53,6 +55,7 @@ public class EncounterService {
     private final MediaAssetRepository mediaRepo;
     private final EncounterTagRepository encTagRepo;
     private final EncounterStatusHistoryRepository historyRepo;
+    private final OccurrenceRepository occurrenceRepo;
     private final ProjectGuard projectGuard;
     private final ApplicationEventPublisher events;
 
@@ -64,6 +67,7 @@ public class EncounterService {
                             MediaAssetRepository mediaRepo,
                             EncounterTagRepository encTagRepo,
                             EncounterStatusHistoryRepository historyRepo,
+                            OccurrenceRepository occurrenceRepo,
                             ProjectGuard projectGuard,
                             ApplicationEventPublisher events) {
         this.encRepo = encRepo;
@@ -74,6 +78,7 @@ public class EncounterService {
         this.mediaRepo = mediaRepo;
         this.encTagRepo = encTagRepo;
         this.historyRepo = historyRepo;
+        this.occurrenceRepo = occurrenceRepo;
         this.projectGuard = projectGuard;
         this.events = events;
     }
@@ -198,6 +203,9 @@ public class EncounterService {
         }
         if (e.getObserver() != null) {
             e.getObserver().getEncounters().remove(e);
+        }
+        if (e.getOccurrence() != null) {
+            e.getOccurrence().getEncounters().remove(e);
         }
 
         // --- 2. wipe all child rows (bulk @Modifying — fast, no listeners).
@@ -342,6 +350,19 @@ public class EncounterService {
                 .orElseThrow(() -> new NotFoundException("Observer not found: " + req.observerId()));
         }
 
+        Occurrence occurrence = null;
+        if (req.occurrenceId() != null) {
+            occurrence = occurrenceRepo.findById(req.occurrenceId())
+                .orElseThrow(() -> new NotFoundException("Occurrence not found: " + req.occurrenceId()));
+            // Cross-project attach would silently leak data between tenants. Refuse.
+            if (occurrence.getProjectId() != null
+                && !occurrence.getProjectId().equals(req.projectId())) {
+                throw new BusinessException(
+                    "Occurrence " + req.occurrenceId() + " belongs to project "
+                    + occurrence.getProjectId() + ", not " + req.projectId());
+            }
+        }
+
         List<Sighting> sightings = List.of();
         if (req.sightingIds() != null && !req.sightingIds().isEmpty()) {
             sightings = sightingRepo.findAllById(req.sightingIds());
@@ -366,6 +387,7 @@ public class EncounterService {
         enc.setEncounterDate(req.encounterDate());
         enc.setIndividual(individual);
         enc.setObserver(observer);
+        enc.setOccurrence(occurrence);
         enc.setSubmitterUserId(currentUserId);
         Encounter saved = encRepo.save(enc);
 
