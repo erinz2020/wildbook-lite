@@ -9,6 +9,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -62,6 +64,41 @@ public class MatchResult {
                fetch = FetchType.LAZY)
     private List<MatchCandidate> candidates = new ArrayList<>();
 
+    /**
+     * Reviewer decision state — see {@link MatchResolution} for the
+     * lifecycle. Starts PENDING; flipped by IaResolutionService
+     * when a reviewer accepts / rejects / skips.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 32, nullable = false)
+    private MatchResolution resolution = MatchResolution.PENDING;
+
+    /**
+     * Just an id (not a JPA relation) to dodge the circular FK loop
+     * (MatchResult -> MatchCandidate, and MatchCandidate -> MatchResult).
+     * Service looks the candidate up by id when it needs it.
+     */
+    @Column(name = "accepted_candidate_id")
+    private Long acceptedCandidateId;
+
+    /**
+     * Just an id pointer to Individual for the same reason — also
+     * keeps the entity navigation graph from leaking into permission
+     * checks. Populated when resolution = REJECTED_NEW_INDIVIDUAL.
+     */
+    @Column(name = "new_individual_id")
+    private Long newIndividualId;
+
+    @Column(name = "resolved_at")
+    private LocalDateTime resolvedAt;
+
+    @Column(name = "resolved_by_user_id")
+    private Long resolvedByUserId;
+
+    /** Free-text reviewer note (e.g., "distinctive fluke pattern"). */
+    @Column(columnDefinition = "text")
+    private String remarks;
+
     public MatchResult() {
         this.createdAt = LocalDateTime.now();
     }
@@ -89,4 +126,22 @@ public class MatchResult {
 
     public List<MatchCandidate> getCandidates() { return candidates; }
     public void setCandidates(List<MatchCandidate> candidates) { this.candidates = candidates; }
+
+    public MatchResolution getResolution() { return resolution; }
+    public void setResolution(MatchResolution resolution) { this.resolution = resolution; }
+
+    public Long getAcceptedCandidateId() { return acceptedCandidateId; }
+    public void setAcceptedCandidateId(Long acceptedCandidateId) { this.acceptedCandidateId = acceptedCandidateId; }
+
+    public Long getNewIndividualId() { return newIndividualId; }
+    public void setNewIndividualId(Long newIndividualId) { this.newIndividualId = newIndividualId; }
+
+    public LocalDateTime getResolvedAt() { return resolvedAt; }
+    public void setResolvedAt(LocalDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
+
+    public Long getResolvedByUserId() { return resolvedByUserId; }
+    public void setResolvedByUserId(Long resolvedByUserId) { this.resolvedByUserId = resolvedByUserId; }
+
+    public String getRemarks() { return remarks; }
+    public void setRemarks(String remarks) { this.remarks = remarks; }
 }

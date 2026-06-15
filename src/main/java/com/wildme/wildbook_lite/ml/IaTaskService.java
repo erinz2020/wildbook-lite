@@ -97,8 +97,20 @@ public class IaTaskService {
         requireReadAccess(t);
         // Pre-touch the lazy MatchResult so DTO mapping outside the tx
         // can see candidates without a LazyInitializationException.
+        //
+        // We also walk each candidate to force its lazy `individual`
+        // initialization — the page DTO reads individual.nickname for
+        // every candidate, and a fresh DB hit per candidate outside
+        // the tx would throw LIE.
         if (t.getResult() != null) {
-            t.getResult().getCandidates().size();
+            for (MatchCandidate c : t.getResult().getCandidates()) {
+                if (c.getIndividual() != null) c.getIndividual().getNickname();
+            }
+        }
+        // Pre-touch the lazy annotation -> encounter chain for the
+        // page DTO's queryAnnotation summary.
+        if (t.getAnnotation() != null && t.getAnnotation().getEncounter() != null) {
+            t.getAnnotation().getEncounter().getProjectId();
         }
         return t;
     }
