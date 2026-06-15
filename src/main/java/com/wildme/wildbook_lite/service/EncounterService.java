@@ -14,6 +14,8 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.wildme.wildbook_lite.annotation.AnnotationRepository;
+import com.wildme.wildbook_lite.annotation.FeatureRepository;
 import com.wildme.wildbook_lite.auth.SecurityUtils;
 import com.wildme.wildbook_lite.common.Audited;
 import com.wildme.wildbook_lite.common.ForbiddenException;
@@ -56,6 +58,8 @@ public class EncounterService {
     private final EncounterTagRepository encTagRepo;
     private final EncounterStatusHistoryRepository historyRepo;
     private final OccurrenceRepository occurrenceRepo;
+    private final AnnotationRepository annotationRepo;
+    private final FeatureRepository featureRepo;
     private final ProjectGuard projectGuard;
     private final ApplicationEventPublisher events;
 
@@ -68,6 +72,8 @@ public class EncounterService {
                             EncounterTagRepository encTagRepo,
                             EncounterStatusHistoryRepository historyRepo,
                             OccurrenceRepository occurrenceRepo,
+                            AnnotationRepository annotationRepo,
+                            FeatureRepository featureRepo,
                             ProjectGuard projectGuard,
                             ApplicationEventPublisher events) {
         this.encRepo = encRepo;
@@ -79,6 +85,8 @@ public class EncounterService {
         this.encTagRepo = encTagRepo;
         this.historyRepo = historyRepo;
         this.occurrenceRepo = occurrenceRepo;
+        this.annotationRepo = annotationRepo;
+        this.featureRepo = featureRepo;
         this.projectGuard = projectGuard;
         this.events = events;
     }
@@ -209,6 +217,19 @@ public class EncounterService {
         }
 
         // --- 2. wipe all child rows (bulk @Modifying — fast, no listeners).
+        //
+        //   Order matters here for FK reasons:
+        //     features  → reference annotations AND media_asset.
+        //                 Must die first (else they orphan when their
+        //                 annotation rows are deleted).
+        //     annotations → reference encounter.
+        //                 After their features are gone, safe to drop.
+        //     media     → annotations no longer point at them, so
+        //                 the FK from feature→media is gone too.
+        //     sightings / comments / tags / history → encounter-only FKs,
+        //                 order doesn't matter relative to each other.
+        featureRepo.deleteByEncounterId(id);
+        annotationRepo.deleteByEncounterId(id);
         sightingRepo.deleteByEncounterId(id);
         commentRepo.deleteByEncounterId(id);
         mediaRepo.deleteByEncounterId(id);
