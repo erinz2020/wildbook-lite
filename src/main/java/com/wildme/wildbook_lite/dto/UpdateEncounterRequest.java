@@ -2,6 +2,8 @@ package com.wildme.wildbook_lite.dto;
 
 import java.time.LocalDateTime;
 
+import com.wildme.wildbook_lite.encounter.LivingStatus;
+
 import jakarta.validation.constraints.Size;
 
 /**
@@ -20,6 +22,15 @@ import jakarta.validation.constraints.Size;
  *   - To unlink Individual/Observer (set to null), use the dedicated
  *     PATCH /individual endpoint or assign endpoints; PATCH here only
  *     *sets* a relation, not clears it.
+ *
+ * Richer biological fields (added with the taxonomy refactor):
+ *   - taxonomyId: link to the species catalogue. When set, the service
+ *     ALSO updates the denormalized `species` string to keep the fast
+ *     filter in sync.
+ *   - lifeStage / behavior / livingStatus: biological context.
+ *   - locationId: hierarchical location path ("USA/CA/Monterey Bay").
+ *   - decimalLatitude/Longitude: WGS84 GPS.
+ *   - dynamicProperties: JSON string for site-specific custom fields.
  */
 public record UpdateEncounterRequest(
     @Size(max = 255) String location,
@@ -27,5 +38,14 @@ public record UpdateEncounterRequest(
     LocalDateTime    encounterDate,
     @Size(max = 2000) String notes,
     Long individualId,
-    Long observerId
+    Long observerId,
+
+    Long taxonomyId,
+    @Size(max = 255) String locationId,
+    Double decimalLatitude,
+    Double decimalLongitude,
+    @Size(max = 32) String lifeStage,
+    @Size(max = 5000) String behavior,
+    LivingStatus livingStatus,
+    @Size(max = 10000) String dynamicProperties
 ) {}

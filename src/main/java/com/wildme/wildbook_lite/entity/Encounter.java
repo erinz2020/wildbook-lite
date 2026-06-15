@@ -5,7 +5,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.wildme.wildbook_lite.encounter.EncounterStatus;
+import com.wildme.wildbook_lite.encounter.LivingStatus;
 import com.wildme.wildbook_lite.occurrence.Occurrence;
+import com.wildme.wildbook_lite.taxonomy.Taxonomy;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -29,7 +31,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
     @Index(name = "ix_encounter_project", columnList = "project_id"),
     @Index(name = "ix_encounter_species", columnList = "species"),
     @Index(name = "ix_encounter_status", columnList = "status"),
-    @Index(name = "ix_encounter_occurrence", columnList = "occurrence_id")
+    @Index(name = "ix_encounter_occurrence", columnList = "occurrence_id"),
+    @Index(name = "ix_encounter_taxonomy", columnList = "taxonomy_id"),
+    @Index(name = "ix_encounter_location_id", columnList = "location_id")
 })
 public class Encounter {
 
@@ -41,7 +45,62 @@ public class Encounter {
     private Long projectId;
 
     private String location;
+
+    /**
+     * Denormalized species name. Kept in sync with taxonomy.scientificName
+     * by EncounterService when a taxonomy is assigned. Read it for fast
+     * filtering and listing; for authoritative species questions use
+     * the taxonomy relation.
+     */
     private String species;
+
+    /**
+     * Optional reference to the species catalogue. Nullable because
+     * old rows may have only the denormalized `species` string from
+     * before the taxonomy table existed.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "taxonomy_id")
+    private Taxonomy taxonomy;
+
+    /**
+     * Hierarchical location path, e.g. "USA/CA/Monterey Bay". Stored as
+     * one column so we can do prefix queries (`location_id LIKE 'USA/%'`)
+     * without joining a separate place table — pragmatic shortcut that
+     * mirrors real Wildbook's LOCATIONID convention.
+     */
+    @Column(name = "location_id", length = 255)
+    private String locationId;
+
+    @Column(name = "decimal_latitude")
+    private Double decimalLatitude;
+
+    @Column(name = "decimal_longitude")
+    private Double decimalLongitude;
+
+    /** "juvenile", "sub-adult", "adult", ... Free string by convention. */
+    @Column(name = "life_stage", length = 32)
+    private String lifeStage;
+
+    /** Free-text behavior at the time of encounter. */
+    @Column(columnDefinition = "text")
+    private String behavior;
+
+    /** Alive at time of observation, dead-stranding, or unknown. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "living_status", length = 16)
+    private LivingStatus livingStatus = LivingStatus.UNKNOWN;
+
+    /**
+     * Free-form per-encounter properties. Stored as a JSON string in a
+     * TEXT column (kept portable — no Postgres-specific jsonb mapping
+     * needed at the JPA level). For querying, callers parse it
+     * application-side. Real Wildbook treats this as the escape hatch
+     * for site-specific fields that don't belong in the schema.
+     */
+    @Column(name = "dynamic_properties", columnDefinition = "text")
+    private String dynamicProperties;
+
     private LocalDateTime encounterDate;
     private String notes;
 
@@ -146,6 +205,30 @@ public class Encounter {
 
     public Occurrence getOccurrence() { return occurrence; }
     public void setOccurrence(Occurrence occurrence) { this.occurrence = occurrence; }
+
+    public Taxonomy getTaxonomy() { return taxonomy; }
+    public void setTaxonomy(Taxonomy taxonomy) { this.taxonomy = taxonomy; }
+
+    public String getLocationId() { return locationId; }
+    public void setLocationId(String locationId) { this.locationId = locationId; }
+
+    public Double getDecimalLatitude() { return decimalLatitude; }
+    public void setDecimalLatitude(Double decimalLatitude) { this.decimalLatitude = decimalLatitude; }
+
+    public Double getDecimalLongitude() { return decimalLongitude; }
+    public void setDecimalLongitude(Double decimalLongitude) { this.decimalLongitude = decimalLongitude; }
+
+    public String getLifeStage() { return lifeStage; }
+    public void setLifeStage(String lifeStage) { this.lifeStage = lifeStage; }
+
+    public String getBehavior() { return behavior; }
+    public void setBehavior(String behavior) { this.behavior = behavior; }
+
+    public LivingStatus getLivingStatus() { return livingStatus; }
+    public void setLivingStatus(LivingStatus livingStatus) { this.livingStatus = livingStatus; }
+
+    public String getDynamicProperties() { return dynamicProperties; }
+    public void setDynamicProperties(String dynamicProperties) { this.dynamicProperties = dynamicProperties; }
 
     public List<Sighting> getSightings() { return sightings; }
     public void setSightings(List<Sighting> sightings) { this.sightings = sightings; }

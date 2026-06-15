@@ -33,6 +33,8 @@ import com.wildme.wildbook_lite.exception.BusinessException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
 import com.wildme.wildbook_lite.occurrence.Occurrence;
 import com.wildme.wildbook_lite.occurrence.OccurrenceRepository;
+import com.wildme.wildbook_lite.taxonomy.Taxonomy;
+import com.wildme.wildbook_lite.taxonomy.TaxonomyRepository;
 import com.wildme.wildbook_lite.notification.EncounterAssignedEvent;
 import com.wildme.wildbook_lite.notification.EncounterCreatedEvent;
 import com.wildme.wildbook_lite.notification.EncounterPublishedEvent;
@@ -60,6 +62,7 @@ public class EncounterService {
     private final OccurrenceRepository occurrenceRepo;
     private final AnnotationRepository annotationRepo;
     private final FeatureRepository featureRepo;
+    private final TaxonomyRepository taxonomyRepo;
     private final ProjectGuard projectGuard;
     private final ApplicationEventPublisher events;
 
@@ -74,6 +77,7 @@ public class EncounterService {
                             OccurrenceRepository occurrenceRepo,
                             AnnotationRepository annotationRepo,
                             FeatureRepository featureRepo,
+                            TaxonomyRepository taxonomyRepo,
                             ProjectGuard projectGuard,
                             ApplicationEventPublisher events) {
         this.encRepo = encRepo;
@@ -87,6 +91,7 @@ public class EncounterService {
         this.occurrenceRepo = occurrenceRepo;
         this.annotationRepo = annotationRepo;
         this.featureRepo = featureRepo;
+        this.taxonomyRepo = taxonomyRepo;
         this.projectGuard = projectGuard;
         this.events = events;
     }
@@ -268,6 +273,23 @@ public class EncounterService {
         if (request.species() != null)       encounter.setSpecies(request.species());
         if (request.encounterDate() != null) encounter.setEncounterDate(request.encounterDate());
         if (request.notes() != null)         encounter.setNotes(request.notes());
+
+        if (request.taxonomyId() != null) {
+            Taxonomy tax = taxonomyRepo.findById(request.taxonomyId())
+                .orElseThrow(() -> new NotFoundException("Taxonomy not found: " + request.taxonomyId()));
+            encounter.setTaxonomy(tax);
+            // Keep the denormalized species column in sync with the
+            // canonical scientificName — the species filter on /list
+            // depends on it.
+            encounter.setSpecies(tax.getScientificName());
+        }
+        if (request.locationId() != null)         encounter.setLocationId(request.locationId());
+        if (request.decimalLatitude() != null)    encounter.setDecimalLatitude(request.decimalLatitude());
+        if (request.decimalLongitude() != null)   encounter.setDecimalLongitude(request.decimalLongitude());
+        if (request.lifeStage() != null)          encounter.setLifeStage(request.lifeStage());
+        if (request.behavior() != null)           encounter.setBehavior(request.behavior());
+        if (request.livingStatus() != null)       encounter.setLivingStatus(request.livingStatus());
+        if (request.dynamicProperties() != null)  encounter.setDynamicProperties(request.dynamicProperties());
 
         if (request.individualId() != null) {
             Individual ind = indRepo.findById(request.individualId())
