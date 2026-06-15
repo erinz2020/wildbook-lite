@@ -6,6 +6,9 @@ javaprogress.md
 interviewQuestions.md
 CLAUDE.md
 pitfalls.md
+
+### Claude per-user config (skill files at .claude/skills/ are checked in) ###
+.claude/settings.local.json
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
