@@ -88,7 +88,7 @@ Even though this is a learning project, treat the local DB with care:
 | `annotation` | `id` | Bounding box on a MediaAsset (or trivial whole-image). |
 | `feature` | `id` | Bridge between annotation and media_asset. `type` ∈ (`BBOX`, `TRIVIAL`). |
 | `ia_task` | `id` | Async identification job. `status` is the state-machine column. |
-| `match_result` | `id` | 1:1 with `ia_task` (UNIQUE on `ia_task_id`). |
+| `match_result` | `id` | 1:1 with `ia_task` (UNIQUE on `ia_task_id`). Also carries the reviewer-decision: `resolution`, `accepted_candidate_id`, `new_individual_id`, `resolved_at`, `resolved_by_user_id`, `remarks`. |
 | `match_candidate` | `id` | `match_result_id` × `individual_id` × `score` × `rank_position`. |
 
 ### Reference Data
@@ -252,6 +252,36 @@ PENDING → RUNNING → DONE | FAILED
 PENDING → CANCELLED (user-initiated only)
 ```
 
+## MatchResult Resolution (Reviewer Decision)
+
+`match_result.resolution` carries the human-review outcome after the
+ML matcher produces candidates. Values (`@Enumerated(STRING)`):
+
+```
+PENDING                 → DONE task, reviewer hasn't decided yet
+ACCEPTED                → reviewer picked a candidate;
+                          accepted_candidate_id is set;
+                          encounter.individual_id was updated to match
+REJECTED_NEW_INDIVIDUAL → none matched, reviewer created a new animal;
+                          new_individual_id is set;
+                          encounter.individual_id points at the new row
+SKIPPED                 → reviewer declined to decide (e.g., bad photos);
+                          encounter is untouched, audit fact only
+```
+
+Transitions: `PENDING → {ACCEPTED | REJECTED_NEW_INDIVIDUAL | SKIPPED}`
+only. **Terminal states are immutable** — any retry returns 400.
+Enforced in `ml/IaResolutionService.requirePendingResolution`.
+
+Decision metadata columns:
+- `resolved_at` (timestamp)
+- `resolved_by_user_id` (Long, just an id — not a JPA relation)
+- `remarks` (text, optional reviewer note)
+
+When `ACCEPTED` or `REJECTED_NEW_INDIVIDUAL`, the service ALSO sets
+`encounter.individual_id` on the encounter that owns the query
+annotation. SKIPPED does not touch the encounter.
+
 ## Common Queries
 
 ### "What encounters does this project have, by status?"
@@ -328,6 +358,45 @@ JOIN individual ind   ON ind.id = mc.individual_id
 WHERE i.annotation_id = $1
   AND i.status = 'DONE'
 ORDER BY i.created_at DESC, mc.rank_position ASC;
+```
+
+### "Review queue: match results awaiting reviewer decision (PENDING) in a project"
+
+```sql
+-- Drives the "needs review" inbox: every DONE IaTask whose MatchResult
+-- is still PENDING, scoped to one project.
+SELECT
+  i.id            AS task_id,
+  i.annotation_id,
+  e.id            AS encounter_id,
+  e.species,
+  mr.top_score,
+  mr.created_at   AS result_created_at,
+  i.ended_at      AS task_ended_at
+FROM ia_task i
+JOIN match_result mr ON mr.ia_task_id = i.id
+JOIN annotation a    ON a.id = i.annotation_id
+JOIN encounter e     ON e.id = a.encounter_id
+WHERE e.project_id = $1
+  AND i.status = 'DONE'
+  AND mr.resolution = 'PENDING'
+ORDER BY mr.top_score DESC NULLS LAST, mr.created_at ASC;
+```
+
+### "Reviewer activity: who resolved what last 30 days"
+
+```sql
+-- Audit / metrics on reviewer throughput. Joins both acceptance paths.
+SELECT
+  mr.resolution,
+  mr.resolved_by_user_id AS user_id,
+  COUNT(*) AS decisions,
+  MIN(mr.resolved_at) AS first_decision,
+  MAX(mr.resolved_at) AS last_decision
+FROM match_result mr
+WHERE mr.resolved_at >= now() - interval '30 days'
+GROUP BY mr.resolution, mr.resolved_by_user_id
+ORDER BY decisions DESC;
 ```
 
 ### "Orphan sightings ready to be reported"

@@ -97,7 +97,7 @@ AuditLog (cross-cutting, all @Audited methods land here)
 | `Feature` | `annotation/Feature.java` | Bridge entity. `BBOX` or `TRIVIAL` (whole-image placeholder). |
 | `Occurrence` | `occurrence/Occurrence.java` | Group sighting event. Cardinality 1 → N Encounters. |
 | `Taxonomy` | `taxonomy/Taxonomy.java` | Species catalogue. UNIQUE on scientificName. Admin-only writes. |
-| `IaTask` / `MatchResult` / `MatchCandidate` | `ml/` | Async ML pipeline stub. |
+| `IaTask` / `MatchResult` / `MatchCandidate` | `ml/` | Async ML pipeline stub. `MatchResult` also carries the reviewer-decision state (PENDING / ACCEPTED / REJECTED_NEW_INDIVIDUAL / SKIPPED). |
 
 ## Package Layout
 
@@ -106,6 +106,7 @@ com.wildme.wildbook_lite
 ├── annotation/        — Annotation + Feature aggregate (B)
 ├── audit/             — @Audited aspect + AuditLog entity + read endpoints
 ├── auth/              — User, Role, JWT, refresh tokens, @CurrentUser
+├── bulkimport/        — Frontend-parsed xlsx → JSON bulk Encounter import
 ├── comment/           — Comments on Encounters
 ├── common/            — @Audited annotation, ForbiddenException, custom validators
 ├── config/            — SecurityConfig, AsyncConfig, AppProperties, schedulers,
@@ -117,7 +118,8 @@ com.wildme.wildbook_lite
 ├── entity/            — Shared/older entities (Encounter, Individual, Sighting,
 │                       MediaAsset, Observer)
 ├── exception/         — BusinessException (400), NotFoundException (404)
-├── ml/                — Async ML pipeline (E) — IaTask + Runner + Match*
+├── ml/                — Async ML pipeline (E) — IaTask + Runner + Match* +
+│                       IaResolutionService (accept / create-individual / skip)
 ├── notification/      — Notification entity + async event listeners
 ├── occurrence/        — Occurrence aggregate (A)
 ├── project/           — Project + ProjectMember + ProjectGuard SpEL bean
@@ -163,8 +165,12 @@ pattern X in action":
 | `@Audited` aspect | `common/Audited` annotation + `audit/` aspect |
 | ApplicationEventPublisher + `@TransactionalEventListener(AFTER_COMMIT)` | `notification/NotificationListener`, `search/opensearch/EncounterIndexerListener` |
 | Async job pattern (enqueue → 202 → poll) | `ml/IaTaskController`, `ml/IaTaskService.enqueue` |
+| Page-shaped DTO (one-shot UI payload) | `ml/dto/MatchResultPageResponse` (task + query + topN + resolution in one record) |
+| Reviewer-decision over async-ML result | `ml/IaResolutionService` (accept / createIndividualFromQuery / skip) |
+| Immutable terminal state-machine | `ml/MatchResolution` enforced by `IaResolutionService.requirePendingResolution` |
 | Long-running cursor streaming | `repository/EncounterRepository.streamByProjectId` (`@QueryHints` for fetch size) |
-| Per-row REQUIRES_NEW for bulk best-effort ops | `service/EncounterBulkService` (with `@Lazy` self-injection — see footgun below) |
+| Per-row REQUIRES_NEW for bulk best-effort ops | `service/EncounterBulkService`, `bulkimport/BulkImportService` (both use `@Lazy` self-injection — see footgun below) |
+| JSON-in bulk import (find-or-create pattern) | `bulkimport/BulkImportService` |
 | Optimistic locking | `@Version` on every aggregate root entity |
 | OpenSearch `@ConditionalOnProperty` gating | every bean in `search/opensearch/` |
 
@@ -260,26 +266,114 @@ new arrow, append a `Transition` to the static `TABLE` — that's the
 only place. Do NOT branch on status in service code; let
 `EncounterService.transition(id, toStatus)` drive everything.
 
-## IA Pipeline (E)
+## IA Pipeline (E + match-result page)
+
+Two phases — async ML, then human review.
+
+### Phase 1 — async matching
 
 ```
 1. POST  /api/ia-tasks { annotationId }
-       → service.enqueue() saves IaTask{status=PENDING}
-       → runner.run(id) dispatched on async pool
+       → IaTaskService.enqueue() saves IaTask{status=PENDING}
+       → IaTaskRunner.run(id) dispatched on async pool
        → returns 202 + body { id, status: "PENDING" }
 
-2. Runner (separate bean, @Async):
+2. IaTaskRunner (separate bean, @Async):
        markRunning(id)       [REQUIRES_NEW tx]
        sleep 1500ms           (stub for real ML)
        computeCandidates(id)  [REQUIRES_NEW, readOnly]
        markDone(id, list)     [REQUIRES_NEW tx] — sets MatchResult + status=DONE
        (on Exception: markFailed(id, msg))
 
-3. Client polls GET /api/ia-tasks/{id} until status is terminal.
+3. Client polls GET /api/ia-tasks/{taskId}/match-result until status is terminal.
 ```
 
-State machine: `PENDING → RUNNING → DONE | FAILED`, plus user-initiated
+Task state machine: `PENDING → RUNNING → DONE | FAILED`, plus user-initiated
 `PENDING → CANCELLED`. Anything else is a 400.
+
+### Phase 2 — match-result page + reviewer decision
+
+```
+GET  /api/ia-tasks/{taskId}/match-result?topN=5
+       → MatchResultPageResponse: task status + queryAnnotation summary
+         + top-N ranked candidates with individual nicknames + current resolution
+       → topN clamped to [1, 50]; default 5
+
+Reviewer picks one of three terminal actions:
+
+POST /api/ia-tasks/{taskId}/accept
+     body: { candidateId, remarks? }
+     → encounter.individual = candidate.individual
+     → MatchResult.resolution = ACCEPTED + acceptedCandidateId
+     → fires EncounterChangedEvent(UPSERT) for OS sync
+
+POST /api/ia-tasks/{taskId}/create-individual
+     body: { nickname, sex?, remarks? }
+     → new Individual created (inherits encounter species)
+     → encounter.individual = new Individual
+     → MatchResult.resolution = REJECTED_NEW_INDIVIDUAL + newIndividualId
+     → fires EncounterChangedEvent(UPSERT)
+
+POST /api/ia-tasks/{taskId}/skip
+     body: { remarks? }   (entire body optional)
+     → MatchResult.resolution = SKIPPED
+     → encounter NOT touched, NO event fired (skip is audit-only)
+```
+
+Resolution state machine: `PENDING → {ACCEPTED | REJECTED_NEW_INDIVIDUAL |
+SKIPPED}`. **Terminal states are immutable** — no reopen path today; any
+attempt returns 400. Permission gates: accept + create-individual need
+`canWrite` on the encounter's project; skip only needs `canRead`.
+
+### LazyInitializationException defense for the page
+
+`MatchCandidate.individual` is `LAZY`. The page DTO reads
+`individual.nickname` for every candidate, which would trip LIE if it
+ran outside the tx. Both `IaTaskService.findById` and
+`IaResolutionService.loadDoneTask` walk the candidates list inside the
+tx and call `candidate.getIndividual().getNickname()` to force fetch
+before returning. Same pattern for `task.getAnnotation().getEncounter()`.
+
+## Bulk Import
+
+```
+POST /api/imports/encounters
+  body: {
+    projectId,
+    autoCreateTaxonomy?, autoCreateObserver?,
+    rows: [BulkEncounterRow, ...]    // max 1000
+  }
+  returns: BulkImportResult {
+    totalRows, successCount, failureCount,
+    taxonomyAutoCreatedCount, observerAutoCreatedCount,
+    created: [{ rowIndex, encounterId, taxonomyId, taxonomyCreated, ... }],
+    failed:  [{ rowIndex, errorCode, errorMessage }]
+  }
+```
+
+Frontend parses the xlsx (sheetjs in the browser) → emits JSON → POST.
+Synchronous (no ImportJob entity) up to 1000 rows; larger sets must
+chunk client-side.
+
+Per-row execution uses **`@Lazy` self-injection** on `BulkImportService`
+so each row runs in its own `REQUIRES_NEW` sub-tx; one bad row never
+poisons its siblings. Project-level permission is checked ONCE at the
+top of the batch.
+
+Stable error codes the frontend can branch on:
+`VALIDATION`, `INDIVIDUAL_NOT_FOUND`, `SPECIES_MISMATCH`,
+`TAXONOMY_NOT_FOUND`, `INTERNAL`.
+
+Find-or-create policy:
+- **Taxonomy** — looked up by scientificName ILIKE; created with derived
+  genus/specificEpithet when `autoCreateTaxonomy=true`.
+- **Observer** — looked up by name ILIKE; created with optional
+  email/org when `autoCreateObserver=true`.
+- **Individual** — lookup-only. NEVER auto-created; species mismatch is
+  a SPECIES_MISMATCH error.
+
+Successful rows fire `EncounterChangedEvent(UPSERT)` AFTER the per-row
+commit so the existing AFTER_COMMIT @Async OS indexer chain picks them up.
 
 ## Search
 
@@ -382,7 +476,7 @@ Already wired today: `feature → annotation → media → sighting → comment 
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `LazyInitializationException` in controller | DTO mapping after the tx closed | Either return entity (Spring opens session-in-view) OR pre-touch the lazy collection inside the @Transactional service method: `e.getKids().size();` |
+| `LazyInitializationException` in controller | DTO mapping after the tx closed | Either return entity (Spring opens session-in-view) OR pre-touch the lazy collection inside the @Transactional service method: `e.getKids().size();` For nested chains (e.g., `result.candidates[*].individual.nickname` in the match-result page), walk each child and touch a field — `for (c : kids) c.getChild().getName()`. |
 | `@Async` method runs synchronously | Self-invocation — calling `@Async` method on `this` inside the same bean | Split into separate bean OR `@Lazy` self-inject |
 | `@Transactional(REQUIRES_NEW)` doesn't actually start a new tx | Same proxy bypass as above | `@Lazy` self-injection |
 | `@PreAuthorize` returns 500 instead of 403 | SpEL referenced a `@beanName` that isn't a Spring bean | Make sure `@Component("name")` is set |
@@ -435,5 +529,8 @@ Flyway is available but not wired into the dev flow.
 | State machine | `encounter/EncounterStatus.java` |
 | OpenSearch mapping | `search/opensearch/EncounterIndexer.ensureIndex` |
 | ML pipeline | `ml/IaTaskRunner.java` |
+| Reviewer-decision (accept / new individual / skip) | `ml/IaResolutionService.java` |
+| Match-result page DTO assembly | `ml/dto/MatchResultPageResponse.java` |
+| Bulk import service | `bulkimport/BulkImportService.java` |
 | Audit aspect | `audit/AuditAspect.java` |
 | Permission bean | `project/ProjectGuard.java` |
