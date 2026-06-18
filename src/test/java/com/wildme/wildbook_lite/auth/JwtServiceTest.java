@@ -37,7 +37,8 @@ class JwtServiceTest {
             ),
             new AppProperties.Storage("./tmp"),
             new AppProperties.Scheduling(false, "0 0 3 * * *", "0 0 4 * * *", 30),
-            new AppProperties.OpenSearch(false, "localhost", 9200, "http", "encounters", "", "")
+            new AppProperties.OpenSearch(false, "localhost", 9200, "http", "encounters", "", ""),
+            new AppProperties.Mail(false, "noreply@example.com", "wildbook-lite", 3, 1000)
         );
         jwt = new JwtService(props);
     }
@@ -80,7 +81,8 @@ class JwtServiceTest {
             new AppProperties.Jwt("too-short", 60, 30),
             new AppProperties.Storage("./tmp"),
             new AppProperties.Scheduling(false, "*", "*", 30),
-            new AppProperties.OpenSearch(false, "localhost", 9200, "http", "encounters", "", "")
+            new AppProperties.OpenSearch(false, "localhost", 9200, "http", "encounters", "", ""),
+            new AppProperties.Mail(false, "noreply@example.com", "wildbook-lite", 3, 1000)
         );
         assertThatThrownBy(() -> new JwtService(bad))
             .isInstanceOf(IllegalStateException.class)

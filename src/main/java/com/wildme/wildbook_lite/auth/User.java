@@ -39,6 +39,19 @@ public class User extends BaseEntity {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /**
+     * Whether this user wants to receive transactional email
+     * (encounter assignments, publish notifications, etc.). Defaults
+     * to true on user-create — admins can toggle via PATCH /api/users/{id}.
+     *
+     * Why on User and not a separate `notification_preferences` table:
+     *  - One toggle, no per-channel granularity needed today.
+     *  - Adds one nullable column on a small table; easy to evolve
+     *    into a preferences sub-resource later if we grow more flags.
+     */
+    @Column(name = "email_opt_in", nullable = false)
+    private boolean emailOptIn = true;
+
     @ElementCollection(fetch = FetchType.EAGER, targetClass = Role.class)
     @CollectionTable(
         name = "user_roles",
@@ -68,6 +81,9 @@ public class User extends BaseEntity {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public boolean isEmailOptIn() { return emailOptIn; }
+    public void setEmailOptIn(boolean emailOptIn) { this.emailOptIn = emailOptIn; }
 
     public Set<Role> getRoles() { return roles; }
     public void setRoles(Set<Role> roles) { this.roles = roles; }

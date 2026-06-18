@@ -29,7 +29,8 @@ public record AppProperties(
     @Valid Jwt jwt,
     @Valid Storage storage,
     @Valid Scheduling scheduling,
-    @Valid OpenSearch opensearch
+    @Valid OpenSearch opensearch,
+    @Valid Mail mail
 ) {
     public record Jwt(
         @NotBlank @Size(min = 32, message = "must be >= 32 bytes for HS256") String secret,
@@ -63,5 +64,27 @@ public record AppProperties(
         @NotBlank String indexName,
         String username,
         String password
+    ) {}
+
+    /**
+     * Outbound email config.
+     *
+     *  - `enabled=false` (the default) skips the EmailSender + EmailListener
+     *    beans entirely, via @ConditionalOnProperty. The app boots fine
+     *    without any SMTP infra — silent feature-flag for local dev / CI.
+     *  - `fromAddress` is what appears in the From: header. Pick a value
+     *    that survives SPF/DKIM at your real SMTP relay before flipping
+     *    enabled=true in production.
+     *  - SMTP host/port/credentials are read by Spring's MailSenderAutoConfiguration
+     *    from the standard `spring.mail.*` keys; we keep `app.mail.*`
+     *    narrowly focused on what only WE care about. The two namespaces
+     *    intentionally don't collide.
+     */
+    public record Mail(
+        boolean enabled,
+        @NotBlank String fromAddress,
+        @NotBlank @Size(max = 64) String fromName,
+        @Min(1) int maxAttempts,
+        @Min(0) long initialBackoffMillis
     ) {}
 }

@@ -42,3 +42,9 @@ app:
     index-name: encounters
     username: ""                  # security plugin disabled in dev
     password: ""
+  mail:
+    enabled: false                # flip to true once spring.mail.* points at a real SMTP relay
+    from-address: noreply@wildbook-lite.local
+    from-name: wildbook-lite
+    max-attempts: 3               # @Retryable: total tries, NOT extra retries (3 = 1 + 2 retries)
+    initial-backoff-millis: 1000  # exponential backoff: 1s, 2s, 4s, ...
