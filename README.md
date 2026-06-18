@@ -13,17 +13,33 @@ high-frequency backend interview topic.
 
 ## What it does
 
-- **Auth**: register / login with username + password, get back a short-lived
+- **Auth**: login with username + password, get back a short-lived
   JWT **access token** and a longer-lived DB-stored **refresh token**.
   Refresh rotates (single-use) and logout revokes all refresh tokens.
-- **Users**: every authenticated user can read/update their own profile;
-  ADMINs can list users.
+- **Users**: admin-only create/modify/delete (researchers don't self-register).
+  Every authenticated user can read/update their own profile.
 - **Projects**: group encounters together. Membership is explicit, with
   three levels: `VIEWER` < `EDITOR` < `OWNER`. Permissions are enforced
   both by `@PreAuthorize` SpEL and by service-layer guards.
 - **Encounters**: record a single sighting (species, location, date,
-  notes) scoped to a project. Can be assigned to an `Individual` (a
-  specific tracked animal) and witnessed by an `Observer`.
+  GPS, lifeStage, behavior, livingStatus, notes) scoped to a project.
+  Can be assigned to an `Individual` (a specific tracked animal),
+  witnessed by an `Observer`, and grouped under an `Occurrence`.
+  Workflow state machine: `DRAFT → REVIEWED → PUBLISHED → ARCHIVED`,
+  with role-gated transitions and an append-only status history.
+- **Occurrence**: a single survey event that groups N encounters
+  (one boat trip → 4 whales = 1 Occurrence + 4 Encounters).
+- **Taxonomy**: species catalogue (scientificName UNIQUE, genus,
+  specificEpithet, ITIS TSN). Admin-only writes; `Encounter.species`
+  is denormalized for fast filter.
+- **Annotation + Feature**: bounding boxes on photos. `Annotation`
+  carries the box geometry; `Feature` is the bridge entity linking
+  one annotation to one (or more) `MediaAsset`s.
+- **IA pipeline (async ML stub)**: enqueue an identification task
+  for an annotation → background runner produces a `MatchResult`
+  with ranked candidate Individuals → reviewer accepts a candidate,
+  creates a new Individual, or skips. State machine on both the
+  task and the resolution; terminal states immutable.
 - **Tags**: each project has its own tag set; encounters can be tagged
   and queried by tag.
 - **Media**: photos attach to encounters via multipart upload, stored on
@@ -32,14 +48,22 @@ high-frequency backend interview topic.
 - **Notifications**: real DB-persisted notifications. After an encounter is
   created, every other project member gets an in-app notification. Has
   list / unread-count / mark-as-read endpoints.
-- **Search**: Postgres full-text search across species, location, and notes,
-  with ts_rank ordering and websearch query syntax (quotes, OR, leading `-`).
+- **Search**: two stacks, both pluggable.
+  - **Postgres FTS** (`to_tsvector`) — always on, no infra needed.
+  - **OpenSearch 2** — gated on `app.opensearch.enabled`. Event-driven
+    sync via `EncounterChangedEvent(UPSERT|DELETE)` fired
+    `AFTER_COMMIT` to `@Async` listener. Bulk reindex endpoint for
+    cold start / disaster recovery.
 - **Statistics**: per-project dashboard counts (encounters, members, media,
   comments) plus top species via native aggregate queries.
-- **Bulk CSV import**: best-effort row-by-row import with per-row error
-  reporting (`REQUIRES_NEW` per row).
-- **Streaming CSV export**: constant-memory streaming download with
-  `StreamingResponseBody` + JPA cursor.
+- **Bulk import**: frontend parses xlsx → POSTs JSON. Best-effort
+  row-by-row with `REQUIRES_NEW` per row (one bad row never poisons
+  its siblings), find-or-create for Taxonomy + Observer, hard lookup
+  on Individual (never auto-create animals). Stable error codes the
+  UI can branch on.
+- **Streaming CSV export**: constant-memory download via
+  `StreamingResponseBody` + Postgres server-side cursor (fetchSize=200).
+  A 10M-row export keeps the heap flat.
 - **Audit log**: every `@Audited` service method writes one row to the
   `audit_log` table (success/fail/user/duration/trace id), via AOP + an
   async event listener.
@@ -67,7 +91,7 @@ high-frequency backend interview topic.
 | Observability    | Spring Boot Actuator + custom HealthIndicator + MDC trace IDs    |
 | File storage     | Local disk by default; `AssetStore` interface lets S3 plug in    |
 | Validation       | Jakarta Validation + custom `@ValidSpecies`                      |
-| Tests            | (TODO — JUnit 5 + Mockito + Testcontainers)                      |
+| Tests            | JUnit 5 + Mockito + AssertJ (85 unit tests). Testcontainers IT files present but require Docker. |
 
 ---
 
@@ -113,27 +137,35 @@ HTTP request -----> | TraceIdFilter (sets X-Request-Id / MDC) |
 ```
 com.wildme.wildbook_lite/
 ├── WildbookLiteApplication.java
-├── auth/             User, Role, JWT, RefreshToken, AuthController, UserController
-├── project/          Project, ProjectMember, ProjectGuard
-├── comment/          nested under encounters
-├── tag/              Tag, EncounterTag (per-project tag set)
-├── notification/     Notification (DB-persisted) + async listener
+├── annotation/       Annotation + Feature (bbox bridge entity, ML linkpoint)
 ├── audit/            AuditLog + async listener (DB-persisted audit trail)
-├── search/           Postgres FTS controller + service
-├── stats/            project stats endpoints
+├── auth/             User, Role, JWT, RefreshToken, AuthController, UserController
+├── bulkimport/       xlsx-parsed-by-frontend JSON bulk Encounter import
+├── comment/          nested under encounters
 ├── common/           BaseEntity, AuditAspect, @Audited, @ValidSpecies,
-│                     PageResponse, CsvWriter, ForbiddenException
+│                    PageResponse, ForbiddenException
 ├── config/           SecurityConfig, JpaConfig, AsyncConfig, CacheConfig,
-│                     CorsConfig, TraceIdFilter, RateLimitFilter,
-│                     AssetStoreHealthIndicator
-├── controller/       (legacy layered) encounter, individual, observer,
-│                     sighting, media, export, bulk import
-├── service/          (legacy layered)
-├── repository/       (legacy layered)
-├── dto/              (legacy layered)
-├── entity/           (legacy layered, pre-BaseEntity)
+│                    CorsConfig, TraceIdFilter, RateLimitFilter,
+│                    AssetStoreHealthIndicator
+├── encounter/        EncounterStatus state machine + EncounterStatusHistory
 ├── exception/        GlobalExceptionHandler + domain exceptions
-└── storage/          AssetStore + LocalAssetStore (Strategy pattern)
+├── export/           Streaming CSV export (StreamingResponseBody + JPA cursor)
+├── ml/               IA pipeline (E): IaTask + IaTaskRunner + MatchResult +
+│                    MatchCandidate + IaResolutionService (accept/new/skip)
+├── notification/     Notification (DB-persisted) + async listener
+├── occurrence/       group sighting event (A): 1 Occurrence → N Encounters
+├── project/          Project, ProjectMember, ProjectGuard
+├── search/           Postgres FTS + OpenSearch (gated)
+├── stats/            project stats endpoints
+├── storage/          AssetStore + LocalAssetStore (Strategy pattern)
+├── tag/              Tag, EncounterTag (per-project tag set)
+├── taxonomy/         species catalogue (C): admin-only writes
+├── controller/       (legacy layered) encounter, individual, observer,
+│                    sighting, media
+├── service/          (legacy layered) EncounterService + EncounterBulkService
+├── repository/       (legacy layered)
+├── dto/              (legacy layered, cross-cutting DTOs)
+└── entity/           (legacy layered, pre-BaseEntity)
 ```
 
 > The project is mid-migration from a classical layered structure
@@ -173,10 +205,11 @@ via `ddl-auto=update`.
 ### 3. End-to-end smoke test
 
 ```bash
-# Register and capture the JWT
-TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/register \
+# Log in (users are admin-created — see /api/users; the data seeder
+# in dev profile bootstraps an "admin" user with password "admin").
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"alice","email":"alice@example.com","password":"password123"}' \
+  -d '{"username":"admin","password":"admin"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["accessToken"])')
 
 # Profile
@@ -217,20 +250,27 @@ TAG=$(curl -s -X POST "http://localhost:8080/api/projects/$PROJ/tags" \
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/api/encounters/1/tags/$TAG"
 
-# Bulk CSV import
-echo 'species,location,notes
-Hawaiian monk seal,Lanai,resting on beach
-Green sea turtle,Maui,foraging in reef
-,Maui,bad row missing species' > /tmp/import.csv
-
+# Bulk import — frontend parses xlsx → POSTs JSON
 curl -X POST -H "Authorization: Bearer $TOKEN" \
-  -F file=@/tmp/import.csv \
-  "http://localhost:8080/api/encounters/import?projectId=$PROJ"
-# returns: {"totalRows":3,"succeeded":2,"failed":1,"errors":[{"rowNumber":4,"reason":"species is required"}]}
+  -H 'Content-Type: application/json' \
+  "http://localhost:8080/api/imports/encounters" \
+  -d "{
+    \"projectId\": $PROJ,
+    \"autoCreateTaxonomy\": true,
+    \"autoCreateObserver\": true,
+    \"rows\": [
+      {\"species\":\"Hawaiian monk seal\",\"location\":\"Lanai\",\"encounterDate\":\"2026-06-11T08:30:00\"},
+      {\"species\":\"Green sea turtle\",  \"location\":\"Maui\",  \"encounterDate\":\"2026-06-11T09:30:00\"},
+      {\"location\":\"Maui\", \"encounterDate\":\"2026-06-11T10:30:00\"}
+    ]
+  }"
+# returns: { totalRows, successCount, failureCount,
+#            created: [{rowIndex, encounterId, ...}],
+#            failed:  [{rowIndex, errorCode, errorMessage}] }
 
-# Streaming CSV export
+# Streaming CSV export — server-side cursor, constant heap
 curl -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8080/api/encounters/export.csv?projectId=$PROJ" \
+  "http://localhost:8080/api/projects/$PROJ/encounters/export.csv?status=PUBLISHED" \
   -o encounters.csv
 
 # Notifications inbox
@@ -261,7 +301,6 @@ curl http://localhost:8080/actuator/health/assetStore # public, custom indicator
 ### Auth
 | Method | Path                          | Auth   | Note                        |
 | ------ | ----------------------------- | ------ | --------------------------- |
-| POST   | `/api/auth/register`          | public | rate-limited                |
 | POST   | `/api/auth/login`             | public | rate-limited                |
 | POST   | `/api/auth/refresh`           | public | rotates the refresh token   |
 | POST   | `/api/auth/logout`            | bearer | revokes all refresh tokens  |
@@ -273,6 +312,9 @@ curl http://localhost:8080/actuator/health/assetStore # public, custom indicator
 | PATCH  | `/api/users/me`               | bearer | update email or password      |
 | GET    | `/api/users/{id}`             | bearer | public profile of another user|
 | GET    | `/api/users`                  | ADMIN  | paginated list of all users   |
+| POST   | `/api/users`                  | ADMIN  | create user                   |
+| PATCH  | `/api/users/{id}`             | ADMIN  | update user                   |
+| DELETE | `/api/users/{id}`             | ADMIN  | soft delete                   |
 
 ### Projects
 | Method | Path                                          | Auth                        |
@@ -286,15 +328,66 @@ curl http://localhost:8080/actuator/health/assetStore # public, custom indicator
 | GET    | `/api/projects/{id}/stats`                    | bearer + project read       |
 
 ### Encounters
-| Method | Path                                          | Auth                        |
-| ------ | --------------------------------------------- | --------------------------- |
-| GET    | `/api/encounters?projectId=...`               | bearer + project read       |
-| POST   | `/api/encounters`                             | bearer + project write      |
-| GET    | `/api/encounters/{id}` (cached)               | bearer + project read       |
-| PATCH  | `/api/encounters/{id}`                        | bearer + project write      |
-| DELETE | `/api/encounters/{id}`                        | bearer + project write      |
-| POST   | `/api/encounters/import?projectId=...`        | bearer + project write      |
-| GET    | `/api/encounters/export.csv?projectId=...`    | bearer + project read       |
+| Method | Path                                                      | Auth                        |
+| ------ | --------------------------------------------------------- | --------------------------- |
+| GET    | `/api/encounters?projectId=...&status=&species=&tagIds=`  | bearer + project read       |
+| POST   | `/api/encounters`                                         | bearer + project write      |
+| GET    | `/api/encounters/{id}` (cached)                           | bearer + project read       |
+| PATCH  | `/api/encounters/{id}`                                    | bearer + project write      |
+| DELETE | `/api/encounters/{id}`                                    | bearer + project write      |
+| POST   | `/api/encounters/report`                                  | bearer + project write      |
+| POST   | `/api/encounters/{id}/transition`                         | bearer + role per arrow     |
+| POST   | `/api/encounters/{id}/assign`                             | bearer + project write      |
+| GET    | `/api/encounters/{id}/history`                            | bearer + project read       |
+| POST   | `/api/encounters/bulk-transition`                         | bearer + project write      |
+| DELETE | `/api/encounters/bulk?ids=...`                            | bearer + project write      |
+
+### Bulk import / CSV export
+| Method | Path                                                          | Auth                        |
+| ------ | ------------------------------------------------------------- | --------------------------- |
+| POST   | `/api/imports/encounters`                                     | bearer + project write      |
+| GET    | `/api/projects/{projectId}/encounters/export.csv`             | bearer + project read       |
+
+### Occurrence (group sighting event)
+| Method | Path                                                  | Auth                        |
+| ------ | ----------------------------------------------------- | --------------------------- |
+| POST   | `/api/occurrences`                                    | bearer + project write      |
+| GET    | `/api/occurrences?projectId=&from=&to=`               | bearer + project read       |
+| GET    | `/api/occurrences/{id}`                               | bearer + project read       |
+| PATCH  | `/api/occurrences/{id}`                               | bearer + project write      |
+| DELETE | `/api/occurrences/{id}`                               | bearer + project write      |
+| POST   | `/api/occurrences/{id}/encounters/{encId}`            | bearer + project write      |
+| DELETE | `/api/occurrences/{id}/encounters/{encId}`            | bearer + project write      |
+
+### Annotations
+| Method | Path                                                  | Auth                        |
+| ------ | ----------------------------------------------------- | --------------------------- |
+| POST   | `/api/encounters/{encId}/annotations`                 | bearer + project write      |
+| GET    | `/api/encounters/{encId}/annotations`                 | bearer + project read       |
+| GET    | `/api/annotations/{id}`                               | bearer + project read       |
+| PATCH  | `/api/annotations/{id}`                               | bearer + project write      |
+| DELETE | `/api/annotations/{id}`                               | bearer + project write      |
+
+### Taxonomy
+| Method | Path                                  | Auth   | Note                  |
+| ------ | ------------------------------------- | ------ | --------------------- |
+| GET    | `/api/taxonomy?q=...`                 | bearer | search                |
+| GET    | `/api/taxonomy/{id}`                  | bearer |                       |
+| POST   | `/api/taxonomy`                       | ADMIN  |                       |
+| PATCH  | `/api/taxonomy/{id}`                  | ADMIN  |                       |
+| DELETE | `/api/taxonomy/{id}`                  | ADMIN  | refuses if referenced |
+
+### IA pipeline (async ML + reviewer decision)
+| Method | Path                                                  | Auth                        |
+| ------ | ----------------------------------------------------- | --------------------------- |
+| POST   | `/api/ia-tasks`                                       | bearer + project write      |
+| GET    | `/api/ia-tasks/{id}`                                  | bearer + project read       |
+| GET    | `/api/ia-tasks?annotationId=...`                      | bearer + project read       |
+| POST   | `/api/ia-tasks/{id}/cancel`                           | bearer + project write      |
+| GET    | `/api/ia-tasks/{id}/match-result?topN=5`              | bearer + project read       |
+| POST   | `/api/ia-tasks/{id}/accept`                           | bearer + project write      |
+| POST   | `/api/ia-tasks/{id}/create-individual`                | bearer + project write      |
+| POST   | `/api/ia-tasks/{id}/skip`                             | bearer + project read       |
 
 ### Tags
 | Method | Path                                          | Auth                        |
@@ -410,13 +503,26 @@ The features above map directly to common backend interview topics:
 
 ## Roadmap
 
+Done since the initial draft:
+- [x] Unit tests with Mockito + AssertJ (85 tests across services + DTOs + state machines)
+- [x] OpenSearch integration (event-driven, AFTER_COMMIT, gated)
+- [x] Bulk import + streaming CSV export
+- [x] IA pipeline (E): async ML stub + reviewer-decision match-result page
+- [x] Occurrence aggregate (A) + Taxonomy refactor (C)
+- [x] Annotation + Feature bridge entity (B)
+- [x] `.claude/skills/` reference docs (wildbook-lite-dev, wildbook-lite-database)
+
+Still open:
 - [ ] Enable Flyway and stop relying on `ddl-auto=update`
 - [ ] Refactor legacy entities (`Encounter`, `Individual`, `Observer`,
   `Sighting`, `MediaAsset`) to extend `BaseEntity`
 - [ ] Generated `tsvector` column + GIN index on encounter for indexed FTS
-- [ ] Unit tests with Mockito + integration tests with Testcontainers
+- [ ] Integration tests with Testcontainers (files present; need Docker)
 - [ ] OpenAPI/Swagger UI once `springdoc-openapi` supports Spring Boot 4
 - [ ] Async export job for very large datasets (S3 + signed-URL link)
 - [ ] Token-bucket rate limiter and lift to Redis for multi-node deploys
 - [ ] Refactor legacy layered packages (`controller/`, `service/`, etc.)
   into feature-based packages
+- [ ] Organization (multi-tenancy) — open question whether the project
+  needs SaaS-style isolation
+- [ ] Email notifications (Phase 6)

@@ -118,6 +118,7 @@ com.wildme.wildbook_lite
 ├── entity/            — Shared/older entities (Encounter, Individual, Sighting,
 │                       MediaAsset, Observer)
 ├── exception/         — BusinessException (400), NotFoundException (404)
+├── export/            — Streaming CSV export (StreamingResponseBody + JPA cursor)
 ├── ml/                — Async ML pipeline (E) — IaTask + Runner + Match* +
 │                       IaResolutionService (accept / create-individual / skip)
 ├── notification/      — Notification entity + async event listeners
@@ -169,6 +170,8 @@ pattern X in action":
 | Reviewer-decision over async-ML result | `ml/IaResolutionService` (accept / createIndividualFromQuery / skip) |
 | Immutable terminal state-machine | `ml/MatchResolution` enforced by `IaResolutionService.requirePendingResolution` |
 | Long-running cursor streaming | `repository/EncounterRepository.streamByProjectId` (`@QueryHints` for fetch size) |
+| `StreamingResponseBody` (chunked response, OOM-safe) | `export/EncounterExportController.exportCsv` — pairs with the JPA cursor for O(1)-heap exports |
+| RFC 4180 CSV writing, hand-rolled | `export/EncounterCsvWriter` (no third-party dep) |
 | Per-row REQUIRES_NEW for bulk best-effort ops | `service/EncounterBulkService`, `bulkimport/BulkImportService` (both use `@Lazy` self-injection — see footgun below) |
 | JSON-in bulk import (find-or-create pattern) | `bulkimport/BulkImportService` |
 | Optimistic locking | `@Version` on every aggregate root entity |
@@ -375,6 +378,64 @@ Find-or-create policy:
 Successful rows fire `EncounterChangedEvent(UPSERT)` AFTER the per-row
 commit so the existing AFTER_COMMIT @Async OS indexer chain picks them up.
 
+## Streaming CSV Export (Phase 8)
+
+```
+GET /api/projects/{projectId}/encounters/export.csv
+    ?species=...      (optional, exact match)
+    &status=PUBLISHED (optional)
+    &from=YYYY-MM-DDTHH:MM:SS  (optional, encounterDate lower bound)
+    &to=YYYY-MM-DDTHH:MM:SS    (optional, encounterDate upper bound)
+
+Response: text/csv; charset=UTF-8  (Content-Disposition: attachment)
+Filename: encounters-project-<id>-<yyyyMMdd-HHmmss>.csv
+```
+
+The complement to bulk import. Memory is O(1) regardless of project
+size — a 10M-row export keeps the heap flat. Three layers cooperate:
+
+```
+EncounterExportController (StreamingResponseBody)
+        ↓ Spring writes chunks on a worker thread, no body-in-heap
+EncounterExportService    (@Transactional readOnly = true)
+        ↓ opens Stream<Encounter> in a try-with-resources
+EncounterRepository.streamByProjectId
+        ↓ Postgres server-side cursor (fetchSize=200)
+ONE Encounter in memory at a time
+```
+
+Key things to know when extending it:
+
+- **JPA stream MUST stay inside the @Transactional**. Returning a
+  `Stream<Encounter>` from the service back to the controller would
+  break this — the session is closed by the time you iterate. That's
+  why `writeCsv(...)` does the iteration + writing in one method.
+- **SecurityContext is propagated to async dispatch threads
+  automatically** (Spring Security 5+). `ProjectGuard.canRead(...)`
+  inside the service still sees the caller's principal — no manual
+  context copy needed.
+- **try-with-resources on the JPA stream** guarantees cursor close,
+  even on IO failure mid-write.
+- **Don't close the response OutputStream** — only flush the
+  BufferedWriter. The servlet container owns the response lifecycle.
+- **Relation columns are IDs, not nicknames.** Including
+  `individual.nickname` would force per-row lazy load (N+1). Callers
+  wanting names can join client-side on the id columns.
+- **Filters apply in-memory** via `ExportFilters.accepts(e)`. DB still
+  full-scans the project; we discard non-matching rows before they
+  become CSV bytes. For very selective filters at very large scale,
+  switch to a JPQL @Query with optional WHERE clauses.
+
+CSV format details (RFC 4180):
+- CRLF (`\r\n`) line endings
+- UTF-8, no BOM (add BOM if Excel-on-Windows is a target audience)
+- Quote a field iff it contains `,` `"` `\r` or `\n`
+- Escape an embedded `"` by doubling it
+- Null → empty cell, NEVER the literal string `"null"`
+- 19 fixed columns (see `EncounterCsvWriter.COLUMNS` for the
+  authoritative order; document any change there as a breaking API
+  change)
+
 ## Search
 
 Two stacks, both behind separate endpoints — both can coexist.
@@ -532,5 +593,7 @@ Flyway is available but not wired into the dev flow.
 | Reviewer-decision (accept / new individual / skip) | `ml/IaResolutionService.java` |
 | Match-result page DTO assembly | `ml/dto/MatchResultPageResponse.java` |
 | Bulk import service | `bulkimport/BulkImportService.java` |
+| CSV export service | `export/EncounterExportService.java` |
+| CSV writer (pure RFC 4180) | `export/EncounterCsvWriter.java` |
 | Audit aspect | `audit/AuditAspect.java` |
 | Permission bean | `project/ProjectGuard.java` |

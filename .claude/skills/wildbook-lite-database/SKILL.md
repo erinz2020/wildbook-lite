@@ -449,6 +449,77 @@ JOIN taxonomy t ON t.id = e.taxonomy_id
 WHERE e.species IS DISTINCT FROM t.scientific_name;
 ```
 
+### "Estimate export row count before kicking off the CSV streamer"
+
+```sql
+-- Cheap COUNT(*) using the project-id index; returns instantly even
+-- for projects with millions of encounters. Use this to set a progress
+-- bar / spinner before the user clicks "Download CSV".
+--
+-- With filters applied:
+SELECT COUNT(*) FROM encounter
+WHERE project_id = $1
+  AND ($2::text IS NULL OR species = $2)
+  AND ($3::text IS NULL OR status  = $3)
+  AND ($4::timestamp IS NULL OR encounter_date >= $4)
+  AND ($5::timestamp IS NULL OR encounter_date <= $5);
+```
+
+## Streaming Reads (server-side cursors)
+
+Wildbook-lite's CSV export path uses a Postgres server-side cursor so
+the heap stays flat regardless of how big the project is. The Java side
+is `EncounterRepository.streamByProjectId` with `@QueryHints(fetchSize=200)`;
+this skill talks about the DB-side knobs and tells.
+
+### What "fetchSize=200" actually does
+
+The JDBC driver opens a portal (Postgres-side cursor) and fetches **200
+rows per round-trip** instead of materializing the whole result set
+client-side. Hibernate hands them to the application one at a time via
+the `Stream<T>` iterator. Heap usage on the app side is bounded by:
+
+```
+(fetchSize * sizeof(row)) + (one row being processed)
+```
+
+For typical encounter rows that's roughly 200 × 2KB = 400KB peak. The
+production cap was chosen large enough to amortize the network
+round-trip cost across many rows, small enough that one batch never
+dominates the JVM heap.
+
+### Pre-conditions
+
+- The connection must be **inside a transaction** (Hibernate enforces).
+  Outside a tx, the driver silently materializes everything and the
+  streaming benefit evaporates. This is why
+  `EncounterExportService.writeCsv` is `@Transactional(readOnly = true)`
+  and consumes the stream inside the method.
+- `autocommit` must be off (Spring's tx management handles this).
+- The application **MUST close the Stream** (try-with-resources). A
+  leaked Stream pins the cursor and the underlying DB connection.
+
+### Watching a streaming export in flight
+
+```sql
+-- See active portals (cursors) for your session:
+SELECT pid, usename, state, query, query_start, wait_event
+FROM pg_stat_activity
+WHERE state IN ('active', 'idle in transaction')
+  AND query ILIKE '%encounter%';
+
+-- For long-running exports, you'll see one row stuck on a SELECT with
+-- a steadily-advancing query_start - now() delta.
+```
+
+### When NOT to stream
+
+If you're going to load all rows into memory anyway (e.g., summing a
+column, returning a Page<T> for the UI), streaming buys nothing and
+loses pagination's natural backpressure. Stream only when the row count
+is unbounded AND the consumer is downstream-bandwidth-limited (writing
+to disk, network, etc.).
+
 ## Gotchas
 
 ### 1. `@Enumerated(STRING)`, never ORDINAL
