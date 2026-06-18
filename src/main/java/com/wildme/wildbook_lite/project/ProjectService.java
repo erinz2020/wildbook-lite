@@ -6,7 +6,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.wildme.wildbook_lite.auth.SecurityUtils;
+import com.wildme.wildbook_lite.common.ForbiddenException;
 import com.wildme.wildbook_lite.exception.NotFoundException;
+import com.wildme.wildbook_lite.organization.OrgGuard;
 import com.wildme.wildbook_lite.project.dto.AddMemberRequest;
 import com.wildme.wildbook_lite.project.dto.CreateProjectRequest;
 
@@ -15,17 +17,30 @@ public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository memberRepository;
+    private final OrgGuard orgGuard;
 
     public ProjectService(ProjectRepository projectRepository,
-                          ProjectMemberRepository memberRepository) {
+                          ProjectMemberRepository memberRepository,
+                          OrgGuard orgGuard) {
         this.projectRepository = projectRepository;
         this.memberRepository = memberRepository;
+        this.orgGuard = orgGuard;
     }
 
     @Transactional
     public Project create(CreateProjectRequest req) {
         Long currentUserId = SecurityUtils.currentUserId();
-        Project p = new Project(req.name(), req.description(), currentUserId);
+
+        // If an org is supplied, the caller must be a member of it. Any
+        // org member can spin up a project — we don't require canManage.
+        // (Tighten to canManage if a future use case demands it.)
+        if (req.organizationId() != null
+            && !orgGuard.isMember(req.organizationId(), currentUserId)) {
+            throw new ForbiddenException(
+                "Not a member of organization: " + req.organizationId());
+        }
+
+        Project p = new Project(req.name(), req.description(), currentUserId, req.organizationId());
         Project saved = projectRepository.save(p);
 
         // Bootstrap: creator is OWNER

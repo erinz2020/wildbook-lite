@@ -1,7 +1,10 @@
 package com.wildme.wildbook_lite.project;
 
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.wildme.wildbook_lite.organization.OrgGuard;
 
 /**
  * Permission bean exposed to SpEL in @PreAuthorize.
@@ -14,14 +17,38 @@ import org.springframework.transaction.annotation.Transactional;
  *  - SpEL inside @PreAuthorize resolves "@beanName" against the
  *    application context.
  *  - Transactions and DB access need a managed bean.
+ *
+ * Two-layer RBAC (new with the Organization feature):
+ *
+ *   Layer 1: ORG membership
+ *     - If the project belongs to an org (project.organizationId != null),
+ *       the caller MUST be a member of that org. No org membership →
+ *       false, regardless of project-level role.
+ *     - "Legacy" projects with no org fall back to layer 2 only.
+ *
+ *   Layer 2: PROJECT role
+ *     - Caller must be a project_member of the project, with role
+ *       >= the required threshold.
+ *
+ * Why @Lazy on OrgGuard:
+ *   - OrgGuard isn't in our circular dependency path today, but a
+ *     future org-side method might need to call ProjectGuard for the
+ *     reverse direction ("project members of an org's projects"). The
+ *     @Lazy is cheap insurance against that edge.
  */
 @Component("projectGuard")
 public class ProjectGuard {
 
+    private final ProjectRepository projectRepository;
     private final ProjectMemberRepository memberRepository;
+    private final OrgGuard orgGuard;
 
-    public ProjectGuard(ProjectMemberRepository memberRepository) {
+    public ProjectGuard(ProjectRepository projectRepository,
+                        ProjectMemberRepository memberRepository,
+                        @Lazy OrgGuard orgGuard) {
+        this.projectRepository = projectRepository;
         this.memberRepository = memberRepository;
+        this.orgGuard = orgGuard;
     }
 
     @Transactional(readOnly = true)
@@ -55,6 +82,16 @@ public class ProjectGuard {
     public boolean hasAtLeast(Long projectId, ProjectRole required) {
         Long userId = currentUserIdOrNull();
         if (userId == null || projectId == null) return false;
+
+        // Layer 1: org gate (only when the project has an org).
+        Long orgId = projectRepository.findById(projectId)
+            .map(Project::getOrganizationId)
+            .orElse(null);
+        if (orgId != null && !orgGuard.isMember(orgId, userId)) {
+            return false;
+        }
+
+        // Layer 2: project role threshold.
         return memberRepository.findByProjectIdAndUserId(projectId, userId)
             .map(m -> m.getRole().ordinal() >= required.ordinal())
             .orElse(false);
