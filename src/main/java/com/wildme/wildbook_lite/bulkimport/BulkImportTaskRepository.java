@@ -1,8 +1,10 @@
-package com.wildme.wildbook_lite.repository;
-import com.wildme.wildbook_lite.entity.BulkImportTask;
+package com.wildme.wildbook_lite.bulkimport;
+
 import java.util.Optional;
+import java.util.UUID;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface BulkImportTaskRepository extends JpaRepository<BulkImportTask, Long> {
-    Optional<BulkImportTask> findByBulkImportId(String bulkImportId);
+    Optional<BulkImportTask> findByBulkImportId(UUID bulkImportId);
 }
