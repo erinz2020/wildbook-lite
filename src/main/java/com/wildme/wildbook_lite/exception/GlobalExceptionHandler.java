@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 
 import com.wildme.wildbook_lite.common.ForbiddenException;
+import com.wildme.wildbook_lite.bulkimport.BulkImportValidationException;
 
 @ControllerAdvice
 public class GlobalExceptionHandler {
@@ -55,6 +56,16 @@ public class GlobalExceptionHandler {
             .reduce((a, b) -> a + "; " + b)
             .orElse("Validation failed");
         return body(HttpStatus.BAD_REQUEST, message);
+    }
+
+    @ExceptionHandler(BulkImportValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleBulkImportValidation(BulkImportValidationException e) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of(
+            "timestamp", Instant.now().toString(),
+            "status", HttpStatus.UNPROCESSABLE_ENTITY.value(),
+            "error", e.getMessage(),
+            "errors", e.errors()
+        ));
     }
 
     @ExceptionHandler(Exception.class)
