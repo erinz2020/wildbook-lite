@@ -30,7 +30,7 @@ public class BulkImportTask extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private BulkImportStatus status = BulkImportStatus.PENDING;
-
+    
     private int totalRows;
 
     private int processedRows;
@@ -45,6 +45,9 @@ public class BulkImportTask extends BaseEntity {
 
     @Column(columnDefinition = "TEXT")
     private String errorsJson;
+
+    @Column(columnDefinition = "TEXT")
+    private String payloadJson;
 
 
     public UUID getBulkImportId() { return bulkImportId; }
@@ -79,4 +82,7 @@ public class BulkImportTask extends BaseEntity {
 
     public String getErrorsJson() { return errorsJson; }
     public void setErrorsJson(String errorsJson) { this.errorsJson = errorsJson; }
+
+    public String getPayloadJson() { return payloadJson; }
+    public void setPayloadJson(String payloadJson) { this.payloadJson = payloadJson; }
 }

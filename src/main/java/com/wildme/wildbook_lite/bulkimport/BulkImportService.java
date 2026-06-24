@@ -32,10 +32,14 @@ public class BulkImportService {
     private final BulkImportTaskRepository taskRepo;    
     private static final double MAX_ROW_FAILURE_RATE = 0.5; // Example threshold for row-level validation failures
     private final ObjectMapper objectMapper;
+    private final BulkImportRunner runner;
 
-    public BulkImportService(BulkImportTaskRepository taskRepo, ObjectMapper objectMapper) {
+    public BulkImportService(BulkImportTaskRepository taskRepo, 
+    ObjectMapper objectMapper,
+    BulkImportRunner runner) {
         this.taskRepo = taskRepo;
         this.objectMapper = objectMapper;
+        this.runner = runner;
     }
 
     /** POST handler delegates here: validate the payload, create a task, return it. */
@@ -59,6 +63,7 @@ public class BulkImportService {
         task.setBulkImportId(req.bulkImportId());
         task.setProjectId(req.projectId());
         task.setTotalRows(req.rows().size());
+        task.setPayloadJson(toJson(new BulkImportPayload(req.fieldNames(), req.rows())));
 
         if(!rowErrors.isEmpty()) {
             task.setErrorsJson(toJson(rowErrors));
@@ -67,7 +72,7 @@ public class BulkImportService {
         try{
 
             BulkImportTask saved = taskRepo.save(task);
-            
+            runner.run(saved.getId()); // Kick off async processing
             return BulkImportResponse.from(saved);
         } catch(DataIntegrityViolationException e) {
             throw new DuplicateBulkImportException("Bulk import already exists: " + req.bulkImportId());
@@ -90,11 +95,11 @@ public class BulkImportService {
         }
     }
 
-    private String toJson(List<ValidationError> errors) {
+    private String toJson(Object value) {
         try {
-            return objectMapper.writeValueAsString(errors);
+            return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to serialize validation errors", e);
+            throw new RuntimeException("Failed to serialize to json", e);
         }
     }
 
