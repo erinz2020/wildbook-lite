@@ -9,8 +9,9 @@ import java.util.UUID;
 public record BulkImportRequest(
     @NotNull UUID bulkImportId,
     Long projectId,
+    @NotBlank String targetType,
     @NotEmpty List<String> fieldNames,
     @NotEmpty List<List<String>> rows,
     boolean processInBackground
-) {    
+) {
 }

@@ -9,6 +9,9 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 
+import lombok.Getter;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -16,6 +19,8 @@ import java.util.UUID;
 @Table(name = "bulk_import_task", indexes = {
     @Index(name = "ix_bulk_import_task_status", columnList = "status")
 })
+@Getter   // Lombok generates a getXxx() for every non-static field at compile time
+@Setter   // Lombok generates a setXxx() for every non-static field
 public class BulkImportTask extends BaseEntity {
 
     @Column(name = "bulk_import_id", nullable = false, unique = true)
@@ -30,7 +35,7 @@ public class BulkImportTask extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private BulkImportStatus status = BulkImportStatus.PENDING;
-    
+
     private int totalRows;
 
     private int processedRows;
@@ -48,41 +53,4 @@ public class BulkImportTask extends BaseEntity {
 
     @Column(columnDefinition = "TEXT")
     private String payloadJson;
-
-
-    public UUID getBulkImportId() { return bulkImportId; }
-    public void setBulkImportId(UUID bulkImportId) { this.bulkImportId = bulkImportId; }
-
-    public Long getProjectId() { return projectId; }
-    public void setProjectId(Long projectId) { this.projectId = projectId; }
-
-    public Long getSubmitterUserId() { return submitterUserId; }
-    public void setSubmitterUserId(Long submitterUserId) { this.submitterUserId = submitterUserId; }
-
-    public BulkImportStatus getStatus() { return status; }
-    public void setStatus(BulkImportStatus status) { this.status = status; }
-
-    public int getTotalRows() { return totalRows; }
-    public void setTotalRows(int totalRows) { this.totalRows = totalRows; }
-
-    public int getProcessedRows() { return processedRows; }
-    public void setProcessedRows(int processedRows) { this.processedRows = processedRows; }
-
-    public int getSuccessCount() { return successCount; }
-    public void setSuccessCount(int successCount) { this.successCount = successCount; }
-
-    public int getFailureCount() { return failureCount; }
-    public void setFailureCount(int failureCount) { this.failureCount = failureCount; }
-
-    public LocalDateTime getStartedAt() { return startedAt; }
-    public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
-
-    public LocalDateTime getFinishedAt() { return finishedAt; }
-    public void setFinishedAt(LocalDateTime finishedAt) { this.finishedAt = finishedAt; }
-
-    public String getErrorsJson() { return errorsJson; }
-    public void setErrorsJson(String errorsJson) { this.errorsJson = errorsJson; }
-
-    public String getPayloadJson() { return payloadJson; }
-    public void setPayloadJson(String payloadJson) { this.payloadJson = payloadJson; }
 }

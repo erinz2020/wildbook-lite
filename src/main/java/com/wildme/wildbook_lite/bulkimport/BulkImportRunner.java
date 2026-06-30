@@ -3,14 +3,16 @@ package com.wildme.wildbook_lite.bulkimport;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.extern.slf4j.Slf4j;
 
 import com.wildme.wildbook_lite.bulkimport.dto.ValidationError;
 
@@ -27,16 +29,23 @@ import com.wildme.wildbook_lite.bulkimport.dto.ValidationError;
  * to PENDING.
  */
 @Component
+@Slf4j   // Lombok generates: private static final Logger log = LoggerFactory.getLogger(...)
 public class BulkImportRunner {
-
-    private static final Logger log = LoggerFactory.getLogger(BulkImportRunner.class);
 
     private final BulkImportTaskRepository taskRepo;
     private final ObjectMapper objectMapper;
+    private final Map<String, RowImporter> importers;
 
-    public BulkImportRunner(BulkImportTaskRepository taskRepo, ObjectMapper objectMapper) {
+    public BulkImportRunner(BulkImportTaskRepository taskRepo,
+                            ObjectMapper objectMapper,
+                            List<RowImporter> importerList) {
         this.taskRepo = taskRepo;
         this.objectMapper = objectMapper;
+        // Spring injects EVERY RowImporter bean as a List. Index them by the
+        // type each one handles, so we can look up the right one at runtime:
+        //   {"encounter" -> EncounterRowImporter, "individual" -> ...}
+        this.importers = importerList.stream()
+            .collect(Collectors.toMap(RowImporter::supportedType, i -> i));
     }
 
     /** Background entry point. Runs on a pool thread (see AsyncConfig). */
@@ -102,7 +111,12 @@ public class BulkImportRunner {
 
         BulkImportPayload payload = fromJson(t.getPayloadJson());
         List<List<String>> rows = payload.rows();
-        int expectedCols = payload.fieldNames().size();
+
+        // Pick the importer for this import's target type.
+        RowImporter importer = importers.get(payload.targetType());
+        if (importer == null) {
+            throw new IllegalArgumentException("No importer for type: " + payload.targetType());
+        }
 
         int success = 0;
         int failure = 0;
@@ -112,7 +126,7 @@ public class BulkImportRunner {
         // abort the whole import.
         for (int i = 0; i < rows.size(); i++) {
             try {
-                simulateImportRow(rows.get(i), expectedCols);
+                importer.importRow(payload.fieldNames(), rows.get(i));
                 success++;
             } catch (Exception e) {
                 failure++;
@@ -128,19 +142,6 @@ public class BulkImportRunner {
             t.setErrorsJson(toJson(errors));
         }
         taskRepo.save(t);
-    }
-
-    /** Stub for the real "row → Encounter + save" work. Fails blank/short rows. */
-    private void simulateImportRow(List<String> row, int expectedCols) {
-        if (row.size() != expectedCols) {
-            throw new IllegalArgumentException("Column count mismatch");
-        }
-        for (String cell : row) {
-            if (cell == null || cell.isBlank()) {
-                throw new IllegalArgumentException("Blank cell");
-            }
-        }
-        // Real implementation: new Encounter(...) + encounterRepo.save(). MVP stubs it.
     }
 
     private BulkImportPayload fromJson(String json) {

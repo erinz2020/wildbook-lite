@@ -5,6 +5,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import lombok.RequiredArgsConstructor;
+
 import com.wildme.wildbook_lite.bulkimport.dto.BulkImportRequest;
 import com.wildme.wildbook_lite.bulkimport.dto.BulkImportResponse;
 import com.wildme.wildbook_lite.bulkimport.dto.ValidationError;
@@ -26,21 +28,16 @@ import java.util.UUID;
  */
 
 @Service
+@RequiredArgsConstructor   // Lombok generates a constructor for all final fields
 public class BulkImportService {
 
     private static final Set<String> REQUIRED_FIELDS = Set.of("species", "datetime", "location"); // Example required fields
-    private final BulkImportTaskRepository taskRepo;    
     private static final double MAX_ROW_FAILURE_RATE = 0.5; // Example threshold for row-level validation failures
+
+    private final BulkImportTaskRepository taskRepo;
     private final ObjectMapper objectMapper;
     private final BulkImportRunner runner;
-
-    public BulkImportService(BulkImportTaskRepository taskRepo, 
-    ObjectMapper objectMapper,
-    BulkImportRunner runner) {
-        this.taskRepo = taskRepo;
-        this.objectMapper = objectMapper;
-        this.runner = runner;
-    }
+    private final BulkImportMapper mapper;   // MapStruct-generated; @RequiredArgsConstructor injects it
 
     /** POST handler delegates here: validate the payload, create a task, return it. */
     @Transactional
@@ -63,7 +60,7 @@ public class BulkImportService {
         task.setBulkImportId(req.bulkImportId());
         task.setProjectId(req.projectId());
         task.setTotalRows(req.rows().size());
-        task.setPayloadJson(toJson(new BulkImportPayload(req.fieldNames(), req.rows())));
+        task.setPayloadJson(toJson(new BulkImportPayload(req.targetType(), req.fieldNames(), req.rows())));
 
         if(!rowErrors.isEmpty()) {
             task.setErrorsJson(toJson(rowErrors));
@@ -73,7 +70,7 @@ public class BulkImportService {
 
             BulkImportTask saved = taskRepo.save(task);
             runner.run(saved.getId()); // Kick off async processing
-            return BulkImportResponse.from(saved);
+            return mapper.toResponse(saved);
         } catch(DataIntegrityViolationException e) {
             throw new DuplicateBulkImportException("Bulk import already exists: " + req.bulkImportId());
         }
@@ -129,7 +126,7 @@ public class BulkImportService {
     public BulkImportResponse getStatus(UUID bulkImportId) {
 
         return taskRepo.findByBulkImportId(bulkImportId)
-        .map(task -> BulkImportResponse.from(task))
+        .map(mapper::toResponse)
         .orElseThrow(() -> new NotFoundException("Bulk import not found"));
     }
 }

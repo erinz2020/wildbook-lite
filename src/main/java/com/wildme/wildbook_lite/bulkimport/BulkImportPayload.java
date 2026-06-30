@@ -9,6 +9,7 @@ import java.util.List;
  * (fieldNames) and the data (rows).
  */
 public record BulkImportPayload(
+    String targetType,
     List<String> fieldNames,
     List<List<String>> rows
 ) {

@@ -26,3 +26,17 @@ logging:
     org.hibernate.orm.jdbc.bind: TRACE
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n"
+
+# Resilience4j — tuning for the "iaService" instance used by ExternalAnalysisClient
+resilience4j:
+  retry:
+    instances:
+      iaService:
+        max-attempts: 3          # try up to 3 times
+        wait-duration: 200ms     # backoff between attempts
+  circuitbreaker:
+    instances:
+      iaService:
+        sliding-window-size: 10
+        failure-rate-threshold: 50          # open the breaker if >50% of calls fail
+        wait-duration-in-open-state: 10s    # stay open 10s, then half-open to test recovery
